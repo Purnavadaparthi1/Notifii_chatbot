@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Track7 Login</title>
+  <style>
+    :root {
+      --bg-1: #0d1b2a;
+      --bg-2: #1b263b;
+      --card: #e0e1dd;
+      --ink: #102a43;
+      --primary: #3a86ff;
+      --primary-hover: #2667cc;
+      --border: #9aa5b1;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at top, var(--bg-2), var(--bg-1));
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      color: var(--ink);
+    }
+
+    .card {
+      width: min(92vw, 440px);
+      background: var(--card);
+      padding: 26px;
+      border-radius: 18px;
+      box-shadow: 0 16px 32px rgba(0, 0, 0, 0.3);
+      animation: rise .35s ease-out;
+    }
+
+    h1 {
+      margin: 0 0 14px;
+      font-size: 1.5rem;
+    }
+
+    p {
+      margin: 0 0 18px;
+      opacity: 0.85;
+    }
+
+    label {
+      display: block;
+      font-weight: 600;
+      margin: 10px 0 6px;
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color .2s ease, box-shadow .2s ease;
+    }
+
+    input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 4px rgba(58, 134, 255, 0.2);
+    }
+
+    button {
+      margin-top: 16px;
+      width: 100%;
+      border: none;
+      border-radius: 10px;
+      padding: 11px 14px;
+      background: var(--primary);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .2s ease;
+    }
+
+    button:hover {
+      background: var(--primary-hover);
+    }
+
+    .meta {
+      margin-top: 14px;
+      font-size: 0.85rem;
+      opacity: 0.75;
+    }
+
+    .result {
+      margin-top: 18px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      background: #f8f9fa;
+      overflow-x: auto;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.85rem;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Track7 Login</h1>
+    <p>Enter username and password. Other payload fields are hardcoded.</p>
+
+    <form method="post">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" required>
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" required>
+
+      <button type="submit">Login</button>
+    </form>
+
+    <div class="meta">
+      Endpoint: https://portal.ntfdev2.com/api/track7/app-login.php
+    </div>
+
+    {% if response_status %}
+      <section class="result">
+        <strong>Status:</strong> {{ response_status }}
+        <pre>{{ response_body }}</pre>
+      </section>
+    {% endif %}
+
+    {% if db_rows %}
+      <section class="result">
+        <strong>DB Rows Fetched:</strong> {{ db_rows|length }}
+        <pre>{{ db_rows }}</pre>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

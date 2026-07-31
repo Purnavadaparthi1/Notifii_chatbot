@@ -1,0 +1,863 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Notifii chatbot</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Space+Grotesk:wght@500;700&display=swap");
+
+    :root {
+      --bg-1: #102027;
+      --bg-2: #20343f;
+      --panel: #f4f7f8;
+      --ink: #1b2a34;
+      --muted: #5f6f78;
+      --accent: #ff7f11;
+      --accent-hover: #e66f00;
+      --bubble-user: #d5ecff;
+      --bubble-bot: #ebf4ec;
+      --border: #c8d2d6;
+      --table-head: #183542;
+      --table-head-ink: #f8fafb;
+      --table-row-alt: #f9fcfd;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top left, var(--bg-2), var(--bg-1));
+      color: var(--ink);
+      font-family: "Manrope", "Segoe UI", sans-serif;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+    }
+
+    .shell {
+      width: min(980px, 100%);
+      height: min(90vh, 760px);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      background: var(--panel);
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.28);
+      animation: drop .35s ease-out;
+    }
+
+    header {
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(120deg, #f7efe2, #f0f8ff);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .title {
+      margin: 0;
+      font-size: 1.2rem;
+      font-weight: 800;
+      letter-spacing: 0.2px;
+      font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+    }
+
+    .sub {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .logout {
+      text-decoration: none;
+      color: #fff;
+      background: #243b4a;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+
+    .chat {
+      overflow-y: auto;
+      padding: 18px;
+      background:
+        linear-gradient(transparent, transparent),
+        repeating-linear-gradient(
+          0deg,
+          rgba(16, 32, 39, 0.03),
+          rgba(16, 32, 39, 0.03) 1px,
+          transparent 1px,
+          transparent 26px
+        );
+    }
+
+    .row {
+      display: flex;
+      margin-bottom: 14px;
+      animation: fade .22s ease;
+    }
+
+    .row.user { justify-content: flex-end; }
+
+    .bubble {
+      max-width: min(76ch, 90%);
+      border-radius: 14px;
+      padding: 11px 13px;
+      border: 1px solid var(--border);
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.35;
+      font-size: 0.95rem;
+      background: #fff;
+      overflow-x: auto;
+    }
+
+    .user .bubble {
+      background: var(--bubble-user);
+      border-color: #9ecdf8;
+    }
+
+    .bot .bubble {
+      background: var(--bubble-bot);
+      border-color: #afd6b2;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .result-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      min-width: 620px;
+      font-family: "Manrope", "Segoe UI", sans-serif;
+    }
+
+    .result-table th,
+    .result-table td {
+      border-bottom: 1px solid #dbe5e8;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+      max-width: 260px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .result-table th {
+      background: var(--table-head);
+      color: var(--table-head-ink);
+      font-weight: 800;
+      letter-spacing: 0.15px;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .result-table tr:nth-child(even) td {
+      background: var(--table-row-alt);
+    }
+
+    .kv-wrap {
+      margin-top: 10px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .kv-card {
+      border: 1px solid #d7e1e5;
+      border-radius: 10px;
+      background: #fff;
+      padding: 8px 10px;
+    }
+
+    .kv-line {
+      font-size: 0.9rem;
+      line-height: 1.35;
+      color: var(--ink);
+      margin: 2px 0;
+      word-break: break-word;
+    }
+
+    .kv-line strong {
+      font-weight: 800;
+      color: #15313d;
+      margin-right: 6px;
+    }
+
+    .meta {
+      margin-top: 6px;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .chart-wrap {
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+      padding: 12px;
+      min-height: 420px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .chart-viewport {
+      width: 100%;
+      height: clamp(360px, 52vh, 700px);
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .chart-image {
+      width: 100%;
+      height: 100%;
+      border-radius: 8px;
+      display: block;
+      background: #fff;
+      object-fit: contain;
+    }
+
+    .chart-bubble {
+      max-width: min(1160px, 99%);
+      width: 100%;
+    }
+
+    .chart-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .chart-meta {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .chart-breakdown {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: var(--ink);
+      font-size: 0.84rem;
+      line-height: 1.35;
+    }
+
+    .chart-breakdown li {
+      margin: 2px 0;
+    }
+
+    .report-wrap {
+      margin-top: 10px;
+      border: 1px solid #bfd1d7;
+      border-radius: 10px;
+      background: linear-gradient(180deg, #f8fbfc, #ffffff);
+      padding: 10px;
+    }
+
+    .report-title {
+      margin: 0 0 6px;
+      font-size: 0.95rem;
+      font-weight: 800;
+      color: #163543;
+    }
+
+    .report-meta {
+      margin: 0 0 8px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .report-kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+    }
+
+    .report-kpi {
+      border: 1px solid #d4e0e4;
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px;
+    }
+
+    .report-kpi-label {
+      font-size: 0.78rem;
+      color: #5f6f78;
+      font-weight: 700;
+      margin-bottom: 3px;
+    }
+
+    .report-kpi-value {
+      font-size: 0.9rem;
+      color: #1b2a34;
+      font-weight: 800;
+      word-break: break-word;
+    }
+
+    form {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 14px;
+      border-top: 1px solid var(--border);
+      background: #fff;
+    }
+
+    .typing-indicator {
+      grid-column: 1 / -1;
+      display: none;
+      align-items: center;
+      gap: 6px;
+      min-height: 20px;
+      padding: 2px 2px 0;
+      color: var(--muted);
+      font-size: 0.83rem;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .typing-indicator.visible {
+      display: inline-flex;
+    }
+
+    .typing-dots {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .typing-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.25;
+      animation: bounce 1s infinite ease-in-out;
+    }
+
+    .typing-dot:nth-child(2) {
+      animation-delay: .18s;
+    }
+
+    .typing-dot:nth-child(3) {
+      animation-delay: .36s;
+    }
+
+    textarea {
+      resize: none;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      font-size: 0.95rem;
+      min-height: 52px;
+      outline: none;
+    }
+
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255, 127, 17, 0.2);
+    }
+
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 12px 16px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.95rem;
+      font-weight: 800;
+      cursor: pointer;
+      transition: background .2s ease;
+    }
+
+    button:hover { background: var(--accent-hover); }
+    button:disabled { opacity: 0.7; cursor: not-allowed; }
+
+    @media (max-width: 740px) {
+      .shell { height: 94vh; }
+      .title { font-size: 1rem; }
+      .sub { font-size: 0.8rem; }
+      form { grid-template-columns: 1fr; }
+      button { width: 100%; }
+    }
+
+    @keyframes fade {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes drop {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes bounce {
+      0%, 80%, 100% {
+        transform: translateY(0);
+        opacity: 0.25;
+      }
+      40% {
+        transform: translateY(-3px);
+        opacity: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <h1 class="title">Notifii chatbot</h1>
+        <p class="sub">Account ID: {{ account_id }} | Session rows loaded: {{ account_data_count }}</p>
+      </div>
+      <a class="logout" href="/logout">Logout</a>
+    </header>
+
+    <section class="chat" id="chatWindow">
+      <div class="row bot">
+        <div class="bubble">
+    Hi! How are you today? I will retrieve your account data and respond with concise business answers.
+        </div>
+      </div>
+    </section>
+
+    <form id="chatForm">
+      <div id="typingIndicator" class="typing-indicator" aria-live="polite" aria-hidden="true">
+        Notifii is thinking
+        <span class="typing-dots" aria-hidden="true">
+          <span class="typing-dot"></span>
+          <span class="typing-dot"></span>
+          <span class="typing-dot"></span>
+        </span>
+      </div>
+      <textarea id="messageInput" placeholder="Example: show latest 10 tracking records for my account" required></textarea>
+      <button id="sendBtn" type="submit">Send</button>
+    </form>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    const chatWindow = document.getElementById("chatWindow");
+    const chatForm = document.getElementById("chatForm");
+    const messageInput = document.getElementById("messageInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const typingIndicator = document.getElementById("typingIndicator");
+
+    function setTypingIndicator(isVisible) {
+      typingIndicator.classList.toggle("visible", isVisible);
+      typingIndicator.setAttribute("aria-hidden", isVisible ? "false" : "true");
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function applyBoldMarkdown(text) {
+      const safeText = escapeHtml(text);
+      const withBold = safeText.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      return withBold.replace(/\n/g, "<br>");
+    }
+
+    function appendMessage(role, text, metaText = "") {
+      const row = document.createElement("div");
+      row.className = `row ${role}`;
+
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      if (role === "bot") {
+        bubble.innerHTML = applyBoldMarkdown(text);
+      } else {
+        bubble.textContent = text;
+      }
+
+      row.appendChild(bubble);
+
+      if (metaText) {
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = metaText;
+        bubble.appendChild(meta);
+      }
+
+      chatWindow.appendChild(row);
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+      return bubble;
+    }
+
+    function appendTableToBubble(bubble, rows) {
+      if (!bubble || !Array.isArray(rows) || rows.length === 0) {
+        return;
+      }
+
+      const columns = Object.keys(rows[0]);
+      if (columns.length === 0) {
+        return;
+      }
+
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap";
+
+      const table = document.createElement("table");
+      table.className = "result-table";
+
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      const serialHeader = document.createElement("th");
+      serialHeader.textContent = "S.No";
+      headRow.appendChild(serialHeader);
+      for (const column of columns) {
+        const th = document.createElement("th");
+        th.textContent = column;
+        headRow.appendChild(th);
+      }
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      for (const [index, rowData] of rows.entries()) {
+        const tr = document.createElement("tr");
+        const serialCell = document.createElement("td");
+        serialCell.textContent = String(index + 1);
+        tr.appendChild(serialCell);
+        for (const column of columns) {
+          const td = document.createElement("td");
+          const cellValue = rowData[column];
+          td.textContent = cellValue === null || cellValue === undefined ? "" : String(cellValue);
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      bubble.appendChild(wrap);
+    }
+
+    function appendKeyValueToBubble(bubble, rows) {
+      if (!bubble || !Array.isArray(rows) || rows.length === 0) {
+        return;
+      }
+
+      const isEmptyValue = (value) => {
+        if (value === null || value === undefined) {
+          return true;
+        }
+        const text = String(value).trim().toLowerCase();
+        return text === "" || text === "none" || text === "null" || text === "nan" || text === "0000-00-00" || text === "0000-00-00 00:00:00";
+      };
+
+      const wrap = document.createElement("div");
+      wrap.className = "kv-wrap";
+
+      for (const rowData of rows) {
+        const card = document.createElement("div");
+        card.className = "kv-card";
+        let hasAnyField = false;
+
+        for (const [key, value] of Object.entries(rowData)) {
+          if (isEmptyValue(value)) {
+            continue;
+          }
+
+          const line = document.createElement("div");
+          line.className = "kv-line";
+
+          const keyText = document.createElement("strong");
+          keyText.textContent = `${key}:`;
+
+          const valueText = document.createElement("span");
+          valueText.textContent = value === null || value === undefined ? "" : String(value);
+
+          line.appendChild(keyText);
+          line.appendChild(valueText);
+          card.appendChild(line);
+          hasAnyField = true;
+        }
+
+        if (hasAnyField) {
+          wrap.appendChild(card);
+        }
+      }
+
+      if (wrap.children.length === 0) {
+        return;
+      }
+
+      bubble.appendChild(wrap);
+    }
+
+    function appendChartToBubble(bubble, chartPayload) {
+      if (!bubble || !chartPayload) {
+        return;
+      }
+
+      bubble.classList.add("chart-bubble");
+
+      const wrap = document.createElement("div");
+      wrap.className = "chart-wrap";
+
+      const viewport = document.createElement("div");
+      viewport.className = "chart-viewport";
+      wrap.appendChild(viewport);
+
+      if (chartPayload.image_base64) {
+        const img = document.createElement("img");
+        img.className = "chart-image";
+        img.alt = chartPayload.title || "Chart";
+        img.src = `data:image/png;base64,${chartPayload.image_base64}`;
+        viewport.appendChild(img);
+      } else {
+        const canvas = document.createElement("canvas");
+        canvas.className = "chart-canvas";
+        viewport.appendChild(canvas);
+
+        const labels = Array.isArray(chartPayload.labels) ? chartPayload.labels : [];
+        const values = Array.isArray(chartPayload.values) ? chartPayload.values : [];
+        const xValues = Array.isArray(chartPayload.x_values) ? chartPayload.x_values : [];
+        const yValues = Array.isArray(chartPayload.y_values) ? chartPayload.y_values : [];
+        const chartType = String(chartPayload.chart_type || "bar").toLowerCase();
+
+        let config = null;
+        if ((chartType === "bar" || chartType === "line" || chartType === "pie") && labels.length > 0 && values.length > 0) {
+          config = {
+            type: chartType,
+            data: {
+              labels,
+              datasets: [{
+                label: chartPayload.y_field || "value",
+                data: values,
+                borderColor: "#d66500",
+                backgroundColor: chartType === "pie"
+                  ? ["#ff7f11", "#1f77b4", "#2a9d8f", "#e76f51", "#264653", "#a8dadc", "#457b9d", "#f4a261", "#e9c46a", "#6a4c93", "#8ac926", "#1982c4", "#ffca3a"]
+                  : "rgba(255, 127, 17, 0.72)",
+                fill: chartType !== "line",
+                tension: chartType === "line" ? 0.25 : 0,
+              }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { title: { display: !!chartPayload.title, text: chartPayload.title || "" } },
+            },
+          };
+        } else if (chartType === "scatter" && xValues.length > 0 && yValues.length > 0 && xValues.length === yValues.length) {
+          config = {
+            type: "scatter",
+            data: {
+              datasets: [{
+                label: chartPayload.y_field || "value",
+                data: xValues.map((x, i) => ({ x, y: yValues[i] })),
+                backgroundColor: "rgba(42, 157, 143, 0.75)",
+              }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { title: { display: !!chartPayload.title, text: chartPayload.title || "" } },
+            },
+          };
+        } else if (chartType === "histogram" && values.length > 0) {
+          const min = Math.min(...values);
+          const max = Math.max(...values);
+          const bins = Math.max(4, Math.min(12, Math.floor(values.length / 2)));
+          const width = bins > 0 ? (max - min || 1) / bins : 1;
+          const counts = new Array(bins).fill(0);
+          for (const value of values) {
+            const rawIndex = Math.floor((value - min) / width);
+            const idx = Math.max(0, Math.min(bins - 1, rawIndex));
+            counts[idx] += 1;
+          }
+          const histLabels = counts.map((_, i) => `${(min + i * width).toFixed(1)}-${(min + (i + 1) * width).toFixed(1)}`);
+          config = {
+            type: "bar",
+            data: {
+              labels: histLabels,
+              datasets: [{
+                label: "Frequency",
+                data: counts,
+                backgroundColor: "rgba(38, 70, 83, 0.78)",
+              }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: { title: { display: !!chartPayload.title, text: chartPayload.title || "" } },
+            },
+          };
+        }
+
+        if (config) {
+          new Chart(canvas.getContext("2d"), config);
+        }
+      }
+
+      const details = [];
+      if (chartPayload.chart_type) {
+        details.push(`Type: ${chartPayload.chart_type}`);
+      }
+      if (chartPayload.point_count !== undefined) {
+        details.push(`Points: ${chartPayload.point_count}`);
+      }
+
+      if (details.length > 0) {
+        const meta = document.createElement("div");
+        meta.className = "chart-meta";
+        meta.textContent = details.join(" | ");
+        wrap.appendChild(meta);
+      }
+
+      const labels = Array.isArray(chartPayload.labels) ? chartPayload.labels : [];
+      const countValues = Array.isArray(chartPayload.count_values) ? chartPayload.count_values : [];
+      const percentageValues = Array.isArray(chartPayload.percentage_values) ? chartPayload.percentage_values : [];
+
+      if (chartPayload.chart_type === "pie" && labels.length > 0 && (countValues.length > 0 || percentageValues.length > 0)) {
+        const breakdown = document.createElement("ul");
+        breakdown.className = "chart-breakdown";
+
+        labels.forEach((label, index) => {
+          const countValue = index < countValues.length ? countValues[index] : null;
+          const percentageValue = index < percentageValues.length ? percentageValues[index] : null;
+
+          const item = document.createElement("li");
+          const countText = countValue === null || countValue === undefined ? "-" : String(countValue);
+          if (percentageValue === null || percentageValue === undefined || percentageValue === "") {
+            item.textContent = `${label}: ${countText}`;
+          } else {
+            item.textContent = `${label}: ${countText} (${percentageValue}%)`;
+          }
+          breakdown.appendChild(item);
+        });
+
+        wrap.appendChild(breakdown);
+      }
+
+      bubble.appendChild(wrap);
+    }
+
+    function appendReportToBubble(bubble, reportPayload) {
+      if (!bubble || !reportPayload) {
+        return;
+      }
+
+      const wrap = document.createElement("div");
+      wrap.className = "report-wrap";
+
+      const title = document.createElement("h3");
+      title.className = "report-title";
+      title.textContent = reportPayload.title || "Report";
+      wrap.appendChild(title);
+
+      const meta = document.createElement("p");
+      meta.className = "report-meta";
+      const generatedAt = reportPayload.generated_at || "";
+      const mode = reportPayload.display_mode || "";
+      meta.textContent = `Generated: ${generatedAt}${mode ? ` | Mode: ${mode}` : ""}`;
+      wrap.appendChild(meta);
+
+      if (Array.isArray(reportPayload.kpis) && reportPayload.kpis.length > 0) {
+        const kpisGrid = document.createElement("div");
+        kpisGrid.className = "report-kpis";
+
+        for (const item of reportPayload.kpis) {
+          const card = document.createElement("div");
+          card.className = "report-kpi";
+
+          const label = document.createElement("div");
+          label.className = "report-kpi-label";
+          label.textContent = item.label || "Metric";
+
+          const value = document.createElement("div");
+          value.className = "report-kpi-value";
+          value.textContent = item.value === null || item.value === undefined ? "" : String(item.value);
+
+          card.appendChild(label);
+          card.appendChild(value);
+          kpisGrid.appendChild(card);
+        }
+
+        wrap.appendChild(kpisGrid);
+      }
+
+      bubble.appendChild(wrap);
+    }
+
+    chatForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const message = messageInput.value.trim();
+      if (!message) {
+        return;
+      }
+
+      appendMessage("user", message);
+      messageInput.value = "";
+      sendBtn.disabled = true;
+      setTypingIndicator(true);
+      const clickStartedAt = performance.now();
+
+      try {
+        const response = await fetch("/chatbot/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message })
+        });
+        const data = await response.json();
+        const clickToResponseSeconds = (performance.now() - clickStartedAt) / 1000;
+        const sqlGeneratedSeconds = response.headers.get("X-SQL-Generated-S") || "n/a";
+        const uiMeta = `UI wait ${clickToResponseSeconds.toFixed(3)}s | SQL generated ${sqlGeneratedSeconds}s`;
+
+        if (!response.ok) {
+          appendMessage("bot", data.answer || data.error || "Request failed.", uiMeta);
+        } else {
+          const bubble = appendMessage("bot", data.answer, uiMeta);
+          if (data.report) {
+            appendReportToBubble(bubble, data.report);
+          }
+          if (data.display === "chart" && data.chart) {
+            appendChartToBubble(bubble, data.chart);
+          } else if (data.display === "table" && Array.isArray(data.rows) && data.rows.length > 0) {
+            appendTableToBubble(bubble, data.rows);
+          } else if (data.display === "key_value" && Array.isArray(data.rows) && data.rows.length > 0) {
+            appendKeyValueToBubble(bubble, data.rows);
+          }
+        }
+
+        console.log(
+          `CHATBOT_UI_TIMING | ui_wait_s=${clickToResponseSeconds.toFixed(3)} | sql_generated_s=${sqlGeneratedSeconds}`
+        );
+      } catch (error) {
+        appendMessage("bot", "Notifii chatbot: Unable to reach chatbot service.");
+      } finally {
+        sendBtn.disabled = false;
+        setTypingIndicator(false);
+        messageInput.focus();
+      }
+    });
+
+    messageInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        chatForm.requestSubmit();
+      }
+    });
+  </script>
+</body>
+</html>

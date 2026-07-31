@@ -1,0 +1,26 @@
+# Python environments
+.venv/
+.venv-1/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Environment files
+.env
+.env.*
+
+# Runtime/session artifacts
+flask_session/
+backend/flask_session/
+
+# Logs
+*.log
+logs/
+backend/logs/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
