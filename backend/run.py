@@ -1,4 +1,5 @@
 import logging
+import os
 
 from db_engine import test_connection
 from login_app import app
@@ -13,4 +14,6 @@ if __name__ == "__main__":
     if not db_ok:
         logger.warning("DB check failed. Starting login app anyway.")
 
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.getenv("PORT", "5000"))
+    debug = os.getenv("FLASK_DEBUG", "0").strip().lower() in ("1", "true", "yes", "on")
+    app.run(host="0.0.0.0", port=port, debug=debug)
