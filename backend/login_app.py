@@ -102,23 +102,66 @@ SQL_TABLE_CSV_COLUMNS = [
     "parse_error",
     "raw_entry",
 ]
+SQL_TABLE_RESET_MARKER_PATH = Path(__file__).resolve().parent / ".sql_query_table_last_reset"
 SQL_TABLE_WRITE_LOCK = threading.Lock()
 SQL_TABLE_WRITE_RETRY_COUNT = max(1, int(os.getenv("CHATBOT_SQL_TABLE_WRITE_RETRY_COUNT", "3")))
 SQL_TABLE_WRITE_RETRY_DELAY_S = max(
     0.01,
     float(os.getenv("CHATBOT_SQL_TABLE_WRITE_RETRY_DELAY_S", "0.05")),
 )
+SQL_TABLE_RESET_DAYS = max(1, int(os.getenv("CHATBOT_SQL_TABLE_RESET_DAYS", "7")))
+
+
+def _read_sql_table_last_reset_epoch():
+    """Return last reset epoch seconds from marker file, if available."""
+    try:
+        if SQL_TABLE_RESET_MARKER_PATH.exists():
+            raw_value = SQL_TABLE_RESET_MARKER_PATH.read_text(encoding="utf-8").strip()
+            if raw_value:
+                return float(raw_value)
+    except (OSError, ValueError) as error:
+        logger.warning("Unable to read SQL CSV reset marker %s: %s", SQL_TABLE_RESET_MARKER_PATH, error)
+    return None
+
+
+def _write_sql_table_last_reset_epoch(epoch_seconds):
+    """Persist last reset epoch seconds to marker file."""
+    try:
+        SQL_TABLE_RESET_MARKER_PATH.write_text(str(float(epoch_seconds)), encoding="utf-8")
+    except OSError as error:
+        logger.warning("Unable to write SQL CSV reset marker %s: %s", SQL_TABLE_RESET_MARKER_PATH, error)
 
 
 def _ensure_sql_table_csv_header():
-    """Create SQL CSV log file with header when missing or empty."""
+    """Create SQL CSV log file header and reset file when older than configured reset window."""
     needs_header = not SQL_TABLE_CSV_PATH.exists() or SQL_TABLE_CSV_PATH.stat().st_size == 0
+    if not needs_header:
+        now_epoch = time.time()
+        last_reset_epoch = _read_sql_table_last_reset_epoch()
+        if last_reset_epoch is None:
+            try:
+                # Fallback to file modified time when marker is missing.
+                last_reset_epoch = SQL_TABLE_CSV_PATH.stat().st_mtime
+            except OSError:
+                last_reset_epoch = now_epoch
+
+        file_age_days = (now_epoch - last_reset_epoch) / 86400.0
+        if file_age_days >= SQL_TABLE_RESET_DAYS:
+            logger.info(
+                "Resetting %s after %.2f day(s) (threshold=%s day(s)).",
+                SQL_TABLE_CSV_PATH,
+                file_age_days,
+                SQL_TABLE_RESET_DAYS,
+            )
+            needs_header = True
+
     if not needs_header:
         return
 
     with SQL_TABLE_CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=SQL_TABLE_CSV_COLUMNS)
         writer.writeheader()
+    _write_sql_table_last_reset_epoch(time.time())
 
 
 def _append_sql_table_row(account_id, user_query, generated_sql, status, rows_count, answer):
@@ -3410,8 +3453,13 @@ def build_direct_table_fast_sql(account_id, user_query, target_table, schema_map
     account_id_lit = sql_literal(account_id)
     text = normalize_intent_text(user_query)
 
-    # Carrier aggregate prompts should not fall back to row-level SELECT * on track_packages.
+    # Carrier aggregate prompts should not fall back to generic table counts.
     if table_name == "track_packages":
+        if is_carrier_percentage_request(text):
+            return build_carrier_percentage_sql(account_id, user_query, row_limit=row_limit)
+        if is_top_carrier_request(text) or is_carrier_wise_count_request(text):
+            return build_carrier_count_sql(account_id, user_query, row_limit=row_limit)
+    if table_name == "track_shipping_carriers":
         if is_carrier_percentage_request(text):
             return build_carrier_percentage_sql(account_id, user_query, row_limit=row_limit)
         if is_top_carrier_request(text) or is_carrier_wise_count_request(text):
@@ -4085,14 +4133,27 @@ def is_carrier_percentage_request(user_query):
 
     has_carrier = _has_carrier_subject(text)
     has_percentage = any(
-        token in text for token in ("percentage", "percent", "share", "distribution", "breakdown", "ratio")
+        token in text
+        for token in (
+            "percentage",
+            "percentages",
+            "percent",
+            "perecentage",
+            "precentage",
+            "share",
+            "distribution",
+            "breakdown",
+            "ratio",
+        )
     )
     has_grouping = (
         _contains_any_term(text, RECIPIENT_WISE_GROUP_TERMS)
         or " each " in f" {text} "
         or " by " in f" {text} "
     )
-    return has_carrier and has_percentage and has_grouping
+    has_package_context = any(token in text for token in TOP_RECIPIENT_PACKAGE_TERMS)
+    plural_carrier_context = "carriers" in text or "shipping carriers" in text
+    return has_carrier and has_percentage and (has_grouping or has_package_context or plural_carrier_context)
 
 
 def is_account_billing_request(user_query):
@@ -4524,7 +4585,14 @@ def build_account_billing_sql(account_id, user_query, row_limit=20):
     return sql_text
 
 
-def build_carrier_count_sql(account_id, user_query, row_limit=10):
+def build_carrier_count_sql(
+    account_id,
+    user_query,
+    row_limit=10,
+    start_date=None,
+    end_date=None,
+    override_time_filters=False,
+):
     """Build deterministic carrier-wise package count SQL in account scope."""
     text = normalize_intent_text(user_query)
     account_id_lit = sql_literal(account_id)
@@ -4560,17 +4628,23 @@ def build_carrier_count_sql(account_id, user_query, row_limit=10):
     conditions = [f"account_id = {account_id_lit}"]
     if any(token in text for token in RECIPIENT_WISE_DELIVERED_TERMS):
         conditions.append("date_received IS NOT NULL")
-    if any(token in text for token in RECIPIENT_WISE_TODAY_TERMS):
-        conditions.append("DATE(date_received) = CURDATE()")
-    elif "yesterday" in text:
-        conditions.append("DATE(date_received) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)")
+    explicit_date_condition = build_explicit_date_range_condition("date_received", start_date, end_date)
+    if override_time_filters and explicit_date_condition:
+        conditions.append(explicit_date_condition)
     else:
-        relative_window_condition = build_relative_time_window_condition(text, "date_received")
-        if relative_window_condition:
-            conditions.append(relative_window_condition)
-    requested_year = extract_requested_calendar_year(text)
-    if requested_year is not None:
-        conditions.append(f"YEAR(date_received) = {requested_year}")
+        if any(token in text for token in RECIPIENT_WISE_TODAY_TERMS):
+            conditions.append("DATE(date_received) = CURDATE()")
+        elif "yesterday" in text:
+            conditions.append("DATE(date_received) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)")
+        else:
+            relative_window_condition = build_relative_time_window_condition(text, "date_received")
+            if relative_window_condition:
+                conditions.append(relative_window_condition)
+        requested_year = extract_requested_calendar_year(text)
+        if requested_year is not None:
+            conditions.append(f"YEAR(date_received) = {requested_year}")
+        if explicit_date_condition:
+            conditions.append(explicit_date_condition)
 
     where_sql = " AND ".join(conditions)
     sql_text = (
@@ -4586,7 +4660,14 @@ def build_carrier_count_sql(account_id, user_query, row_limit=10):
     return sql_text
 
 
-def build_carrier_percentage_sql(account_id, user_query, row_limit=None):
+def build_carrier_percentage_sql(
+    account_id,
+    user_query,
+    row_limit=None,
+    start_date=None,
+    end_date=None,
+    override_time_filters=False,
+):
     """Build deterministic carrier-wise percentage SQL using full scoped total."""
     text = normalize_intent_text(user_query)
     account_id_lit = sql_literal(account_id)
@@ -4595,17 +4676,23 @@ def build_carrier_percentage_sql(account_id, user_query, row_limit=None):
     conditions = [f"account_id = {account_id_lit}"]
     if any(token in text for token in RECIPIENT_WISE_DELIVERED_TERMS):
         conditions.append("date_received IS NOT NULL")
-    if any(token in text for token in RECIPIENT_WISE_TODAY_TERMS):
-        conditions.append("DATE(date_received) = CURDATE()")
-    elif "yesterday" in text:
-        conditions.append("DATE(date_received) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)")
+    explicit_date_condition = build_explicit_date_range_condition("date_received", start_date, end_date)
+    if override_time_filters and explicit_date_condition:
+        conditions.append(explicit_date_condition)
     else:
-        relative_window_condition = build_relative_time_window_condition(text, "date_received")
-        if relative_window_condition:
-            conditions.append(relative_window_condition)
-    requested_year = extract_requested_calendar_year(text)
-    if requested_year is not None:
-        conditions.append(f"YEAR(date_received) = {requested_year}")
+        if any(token in text for token in RECIPIENT_WISE_TODAY_TERMS):
+            conditions.append("DATE(date_received) = CURDATE()")
+        elif "yesterday" in text:
+            conditions.append("DATE(date_received) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)")
+        else:
+            relative_window_condition = build_relative_time_window_condition(text, "date_received")
+            if relative_window_condition:
+                conditions.append(relative_window_condition)
+        requested_year = extract_requested_calendar_year(text)
+        if requested_year is not None:
+            conditions.append(f"YEAR(date_received) = {requested_year}")
+        if explicit_date_condition:
+            conditions.append(explicit_date_condition)
 
     where_sql = " AND ".join(conditions)
     sql_text = (
@@ -4623,7 +4710,14 @@ def build_carrier_percentage_sql(account_id, user_query, row_limit=None):
     return sql_text
 
 
-def build_recipient_count_sql(account_id, user_query, row_limit=100):
+def build_recipient_count_sql(
+    account_id,
+    user_query,
+    row_limit=100,
+    start_date=None,
+    end_date=None,
+    override_time_filters=False,
+):
     """Build deterministic recipient-wise package count SQL using package counts + recipient directory."""
     text = normalize_intent_text(user_query)
     account_id_lit = sql_literal(account_id)
@@ -4645,17 +4739,23 @@ def build_recipient_count_sql(account_id, user_query, row_limit=100):
     conditions = [f"tp.account_id = {account_id_lit}"]
     if any(token in text for token in RECIPIENT_WISE_DELIVERED_TERMS):
         conditions.append("tp.date_received IS NOT NULL")
-    if any(token in text for token in RECIPIENT_WISE_TODAY_TERMS):
-        conditions.append("DATE(tp.date_received) = CURDATE()")
-    elif "yesterday" in text:
-        conditions.append("DATE(tp.date_received) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)")
+    explicit_date_condition = build_explicit_date_range_condition("tp.date_received", start_date, end_date)
+    if override_time_filters and explicit_date_condition:
+        conditions.append(explicit_date_condition)
     else:
-        relative_window_condition = build_relative_time_window_condition(text, "tp.date_received")
-        if relative_window_condition:
-            conditions.append(relative_window_condition)
-    requested_year = extract_requested_calendar_year(text)
-    if requested_year is not None:
-        conditions.append(f"YEAR(tp.date_received) = {requested_year}")
+        if any(token in text for token in RECIPIENT_WISE_TODAY_TERMS):
+            conditions.append("DATE(tp.date_received) = CURDATE()")
+        elif "yesterday" in text:
+            conditions.append("DATE(tp.date_received) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)")
+        else:
+            relative_window_condition = build_relative_time_window_condition(text, "tp.date_received")
+            if relative_window_condition:
+                conditions.append(relative_window_condition)
+        requested_year = extract_requested_calendar_year(text)
+        if requested_year is not None:
+            conditions.append(f"YEAR(tp.date_received) = {requested_year}")
+        if explicit_date_condition:
+            conditions.append(explicit_date_condition)
 
     where_sql = " AND ".join(conditions)
     sql_text = (
@@ -5374,7 +5474,28 @@ def detect_requested_chart_type(user_query):
     if not text:
         return ""
 
+    percentage_intent = any(
+        term in text
+        for term in (
+            "percentage",
+            "percentages",
+            "percent",
+            "perecentage",
+            "precentage",
+            "share",
+            "distribution",
+            "breakdown",
+            "ratio",
+        )
+    )
+    visualization_intent = any(
+        term in text
+        for term in ("chart", "graph", "visual", "visualize", "plot", "show")
+    )
+
     if re.search(r"\bpie\b", text) or re.search(r"\bpie\s+chart\b", text) or re.search(r"\bdoughnut\b", text) or re.search(r"\bdonut\b", text):
+        return "pie"
+    if percentage_intent and visualization_intent:
         return "pie"
     if (
         re.search(r"\bbar\b", text)
@@ -5492,7 +5613,17 @@ def _should_use_pie_by_intent(user_query, labels):
     # Pie is most meaningful when asking for share/percentage style insight.
     percentage_intent = any(
         term in text
-        for term in ("percentage", "percent", "share", "distribution", "breakdown", "ratio")
+        for term in (
+            "percentage",
+            "percentages",
+            "percent",
+            "perecentage",
+            "precentage",
+            "share",
+            "distribution",
+            "breakdown",
+            "ratio",
+        )
     )
     if not percentage_intent:
         return False
@@ -6312,6 +6443,29 @@ def update_chart_context(display_mode, chart_payload):
         session.pop("last_chart_payload", None)
 
 
+def attach_dashboard_filter_context(chart_payload, filter_kind, user_query, row_limit=None):
+    """Attach backend filter context so dashboard can recalculate charts by date range."""
+    if not isinstance(chart_payload, dict) or not chart_payload:
+        return chart_payload
+
+    kind = str(filter_kind or "").strip().lower()
+    if not kind:
+        return chart_payload
+
+    context = {
+        "kind": kind,
+        "user_query": str(user_query or "").strip(),
+    }
+    if row_limit is not None:
+        try:
+            context["row_limit"] = max(1, min(int(row_limit), 200))
+        except (TypeError, ValueError):
+            pass
+
+    chart_payload["dashboard_filter_context"] = context
+    return chart_payload
+
+
 def resolve_visual_response(user_query, rows, default_display, chart_source_rows=None):
     """Resolve final display mode among text/table/key_value/chart."""
     chart_rows = chart_source_rows if isinstance(chart_source_rows, list) and chart_source_rows else rows
@@ -6836,6 +6990,42 @@ def build_relative_time_window_condition(user_query, date_column="date_received"
     if window_unit not in {"DAY", "WEEK", "MONTH", "YEAR"}:
         window_unit = "DAY"
     return f"{column} >= DATE_SUB(CURDATE(), INTERVAL {window_value} {window_unit})"
+
+
+def _normalize_iso_date(value):
+    """Normalize YYYY-MM-DD date string; return empty string when invalid."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return ""
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        return ""
+    return text
+
+
+def build_explicit_date_range_condition(date_column, start_date=None, end_date=None):
+    """Build inclusive SQL DATE range condition for a date/datetime column."""
+    column = str(date_column or "date_received").strip().lower()
+    if not re.fullmatch(r"[a-z_][a-z0-9_\.]*", column):
+        column = "date_received"
+
+    start_iso = _normalize_iso_date(start_date)
+    end_iso = _normalize_iso_date(end_date)
+    if not start_iso and not end_iso:
+        return ""
+
+    if start_iso and end_iso and start_iso > end_iso:
+        start_iso, end_iso = end_iso, start_iso
+
+    conditions = []
+    if start_iso:
+        conditions.append(f"DATE({column}) >= {sql_literal(start_iso)}")
+    if end_iso:
+        conditions.append(f"DATE({column}) <= {sql_literal(end_iso)}")
+    return " AND ".join(conditions)
 
 
 def extract_requested_calendar_year(user_query):
@@ -8868,6 +9058,13 @@ def chatbot_ask():
             "table",
             chart_source_rows=response_source_rows,
         )
+        if isinstance(chart_payload, dict):
+            attach_dashboard_filter_context(
+                chart_payload,
+                "top_recipients",
+                user_query,
+                row_limit=top_query_limit,
+            )
         log_chat_interaction(
             account_id,
             user_query,
@@ -9038,6 +9235,13 @@ def chatbot_ask():
             "table",
             chart_source_rows=response_source_rows,
         )
+        if isinstance(chart_payload, dict):
+            attach_dashboard_filter_context(
+                chart_payload,
+                "top_carriers",
+                user_query,
+                row_limit=carrier_query_limit,
+            )
         log_chat_interaction(
             account_id,
             user_query,
@@ -9117,6 +9321,13 @@ def chatbot_ask():
             "table",
             chart_source_rows=response_source_rows,
         )
+        if isinstance(chart_payload, dict):
+            attach_dashboard_filter_context(
+                chart_payload,
+                "carrier_wise_count",
+                user_query,
+                row_limit=carrier_query_limit,
+            )
         log_chat_interaction(
             account_id,
             user_query,
@@ -9199,6 +9410,13 @@ def chatbot_ask():
             "table",
             chart_source_rows=response_source_rows,
         )
+        if isinstance(chart_payload, dict):
+            attach_dashboard_filter_context(
+                chart_payload,
+                "carrier_percentage",
+                user_query,
+                row_limit=carrier_query_limit,
+            )
         log_chat_interaction(
             account_id,
             user_query,
@@ -10265,6 +10483,109 @@ def chatbot_ask():
             "display": display_mode,
             "chart": chart_payload,
             "status": "ok",
+        }
+    )
+
+
+@app.route("/chatbot/dashboard/filter", methods=["POST"])
+def chatbot_dashboard_filter():
+    """Recalculate dashboard charts with explicit date range filters."""
+    account_id = session.get("account_id")
+    if not account_id:
+        return jsonify({"error": "Session expired. Please login again."}), 401
+
+    payload = request.get_json(silent=True) or {}
+    filter_context = payload.get("filter_context") if isinstance(payload.get("filter_context"), dict) else {}
+    filter_kind = str(filter_context.get("kind", "")).strip().lower()
+    user_query = str(filter_context.get("user_query", "")).strip()
+
+    if not filter_kind:
+        return jsonify({"error": "filter_context.kind is required"}), 400
+
+    start_date = _normalize_iso_date(payload.get("from_date"))
+    end_date = _normalize_iso_date(payload.get("to_date"))
+
+    row_limit = filter_context.get("row_limit")
+    try:
+        if row_limit is not None:
+            row_limit = max(1, min(int(row_limit), 200))
+    except (TypeError, ValueError):
+        row_limit = None
+
+    effective_query = user_query or filter_kind.replace("_", " ")
+
+    sql_text = ""
+    max_rows = row_limit
+    if filter_kind in ("top_recipients", "recipient_wise_count"):
+        sql_text = build_recipient_count_sql(
+            account_id,
+            effective_query,
+            row_limit=row_limit,
+            start_date=start_date,
+            end_date=end_date,
+            override_time_filters=True,
+        )
+    elif filter_kind in ("carrier_percentage",):
+        sql_text = build_carrier_percentage_sql(
+            account_id,
+            effective_query,
+            row_limit=row_limit,
+            start_date=start_date,
+            end_date=end_date,
+            override_time_filters=True,
+        )
+    elif filter_kind in ("top_carriers", "carrier_wise_count"):
+        sql_text = build_carrier_count_sql(
+            account_id,
+            effective_query,
+            row_limit=row_limit,
+            start_date=start_date,
+            end_date=end_date,
+            override_time_filters=True,
+        )
+    else:
+        return jsonify({"status": "unsupported", "error": f"Unsupported filter kind: {filter_kind}"}), 400
+
+    rows, status = execute_read_only_sql_for_chatbot(sql_text, max_rows=max_rows)
+    if status != "ok":
+        return jsonify({"status": "sql_execution_failed", "error": OUT_OF_DB_RESPONSE}), 500
+
+    if not rows:
+        return jsonify(
+            {
+                "status": "ok",
+                "rows": [],
+                "chart": None,
+                "summary": {"total_packages": 0, "row_count": 0},
+            }
+        )
+
+    chart_payload = build_chart_payload(rows, effective_query)
+    if isinstance(chart_payload, dict):
+        attach_dashboard_filter_context(chart_payload, filter_kind, user_query, row_limit=row_limit)
+
+    total_packages = 0.0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        package_count = _try_parse_float(row.get("package_count"))
+        if package_count is not None:
+            total_packages += package_count
+
+    if abs(total_packages - int(total_packages)) < 1e-9:
+        total_packages = int(total_packages)
+    else:
+        total_packages = round(total_packages, 2)
+
+    return jsonify(
+        {
+            "status": "ok",
+            "rows": build_table_dataset(rows, limit=TABLE_VIEW_SAFE_LIMIT),
+            "chart": chart_payload,
+            "summary": {
+                "total_packages": total_packages,
+                "row_count": len(rows),
+            },
         }
     )
 

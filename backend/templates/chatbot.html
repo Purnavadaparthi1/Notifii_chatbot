@@ -25,27 +25,257 @@
 
     * { box-sizing: border-box; }
 
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+    }
+
     body {
       margin: 0;
-      min-height: 100vh;
+      min-height: 100dvh;
       background: radial-gradient(circle at top left, var(--bg-2), var(--bg-1));
       color: var(--ink);
       font-family: "Manrope", "Segoe UI", sans-serif;
-      display: grid;
-      place-items: center;
-      padding: 18px;
+      display: block;
+      padding: 0;
+      overflow: hidden;
     }
 
     .shell {
-      width: min(980px, 100%);
-      height: min(90vh, 760px);
+      width: 100vw;
+      height: 100dvh;
+      display: grid;
+      grid-template-columns: minmax(560px, 1.55fr) minmax(320px, 0.85fr);
+      background: var(--panel);
+      border-radius: 0;
+      overflow: hidden;
+      box-shadow: none;
+      animation: drop .35s ease-out;
+    }
+
+    .dashboard-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px;
+      border-right: 1px solid var(--border);
+      background: linear-gradient(180deg, #edf4f7, #f8fbfc);
+      overflow: auto;
+      min-height: 0;
+      height: 100%;
+      scrollbar-gutter: stable both-edges;
+      scrollbar-width: thin;
+      scrollbar-color: #6f8d9a #dce7ec;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+      overscroll-behavior-y: auto;
+      transition: background .2s ease;
+    }
+
+    .dashboard-panel::-webkit-scrollbar {
+      width: 11px;
+    }
+
+    .dashboard-panel::-webkit-scrollbar-track {
+      background: #dce7ec;
+      border-radius: 8px;
+    }
+
+    .dashboard-panel::-webkit-scrollbar-thumb {
+      background: #6f8d9a;
+      border-radius: 8px;
+      border: 2px solid #dce7ec;
+    }
+
+    .dashboard-panel::-webkit-scrollbar-thumb:hover {
+      background: #54717f;
+    }
+
+    .dashboard-items {
+      padding-right: 6px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      gap: 10px;
+      min-height: 0;
+      width: 100%;
+      align-content: start;
+    }
+
+    .dashboard-items,
+    .dashboard-card,
+    .dashboard-card-body,
+    .chart-wrap,
+    .chart-viewport,
+    .chart-canvas,
+    .chart-image {
+      touch-action: auto;
+      overscroll-behavior: auto;
+    }
+
+    .dashboard-panel.drag-over {
+      background: linear-gradient(180deg, #e1f5ef, #f2fcf8);
+    }
+
+    .dashboard-title {
+      margin: 0;
+      font-size: 1.06rem;
+      font-weight: 800;
+      letter-spacing: 0.2px;
+      font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+      color: #14313f;
+    }
+
+    .dashboard-sub {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.83rem;
+      line-height: 1.35;
+    }
+
+    .dashboard-filter {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 8px;
+      align-items: end;
+      padding: 10px;
+      border: 1px solid #d0dde3;
+      border-radius: 10px;
+      background: #f7fbfc;
+    }
+
+    .dashboard-filter-field {
+      display: grid;
+      gap: 4px;
+    }
+
+    .dashboard-filter-label {
+      font-size: 0.78rem;
+      color: #38525f;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .dashboard-date-input {
+      border: 1px solid #c2d2d9;
+      border-radius: 8px;
+      padding: 7px 9px;
+      font-size: 0.85rem;
+      min-height: 36px;
+      background: #fff;
+      color: #1b2a34;
+      width: 100%;
+    }
+
+    .dashboard-filter-btn {
+      border: none;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.82rem;
+      font-weight: 800;
+      cursor: pointer;
+      color: #fff;
+      background: #1d7f6c;
+      min-height: 36px;
+      width: auto;
+    }
+
+    .dashboard-filter-btn:hover {
+      background: #166554;
+    }
+
+    .dashboard-filter-btn.secondary {
+      background: #6a7f89;
+    }
+
+    .dashboard-filter-btn.secondary:hover {
+      background: #53666f;
+    }
+
+    .dashboard-filter-status {
+      grid-column: 1 / -1;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #4f6672;
+      min-height: 16px;
+    }
+
+    .dashboard-card {
+      border: 1px solid #c6d5dc;
+      border-radius: 10px;
+      background: #fff;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(22, 53, 67, 0.08);
+      flex: 0 0 auto;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .dashboard-card-head {
+      padding: 8px 10px;
+      font-size: 0.8rem;
+      font-weight: 800;
+      color: #1d3b49;
+      border-bottom: 1px solid #e2eaee;
+      background: #f7fbfc;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .dashboard-remove {
+      border: none;
+      background: transparent;
+      color: #7a8e98;
+      font-size: 0.85rem;
+      cursor: pointer;
+      padding: 0;
+      margin: 0;
+      width: auto;
+      font-weight: 800;
+    }
+
+    .dashboard-remove:hover {
+      color: #2a4150;
+      background: transparent;
+    }
+
+    .dashboard-card-body {
+      padding: 10px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-gutter: stable;
+    }
+
+    .dashboard-card .table-wrap,
+    .dashboard-card .chart-wrap,
+    .dashboard-card .report-wrap,
+    .dashboard-card .kv-wrap {
+      margin-top: 0;
+    }
+
+    .dashboard-card .chart-wrap {
+      min-width: 0;
+      width: 100%;
+    }
+
+    .dashboard-card .chart-viewport {
+      height: clamp(220px, 30vh, 300px);
+      min-width: 0;
+    }
+
+    .dashboard-card .result-table {
+      min-width: 520px;
+      font-size: 0.86rem;
+    }
+
+    .chat-shell {
       display: grid;
       grid-template-rows: auto 1fr auto;
-      background: var(--panel);
-      border-radius: 18px;
+      min-width: 0;
+      min-height: 0;
       overflow: hidden;
-      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.28);
-      animation: drop .35s ease-out;
     }
 
     header {
@@ -83,6 +313,7 @@
 
     .chat {
       overflow-y: auto;
+      min-height: 0;
       padding: 18px;
       background:
         linear-gradient(transparent, transparent),
@@ -215,7 +446,7 @@
 
     .chart-viewport {
       width: 100%;
-      height: clamp(360px, 52vh, 700px);
+      height: clamp(250px, 34vh, 400px);
       border-radius: 8px;
       background: #fff;
       overflow: hidden;
@@ -254,6 +485,41 @@
       color: var(--ink);
       font-size: 0.84rem;
       line-height: 1.35;
+    }
+
+    .dashboard-source {
+      cursor: grab;
+    }
+
+    .dashboard-source:active {
+      cursor: grabbing;
+    }
+
+    .result-actions {
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .result-hint {
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .add-dashboard-btn {
+      border-radius: 8px;
+      padding: 8px 11px;
+      background: #1d7f6c;
+      font-size: 0.82rem;
+      width: auto;
+    }
+
+    .add-dashboard-btn:hover {
+      background: #166554;
     }
 
     .chart-breakdown li {
@@ -389,11 +655,33 @@
     button:disabled { opacity: 0.7; cursor: not-allowed; }
 
     @media (max-width: 740px) {
-      .shell { height: 94vh; }
+      .shell {
+        height: 94vh;
+        grid-template-columns: 1fr;
+      }
+      .dashboard-panel {
+        max-height: 44vh;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+      .dashboard-items {
+        grid-template-columns: 1fr;
+      }
+      .dashboard-card .chart-wrap,
+      .dashboard-card .chart-viewport {
+        min-width: 0;
+      }
+      .dashboard-filter {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      }
       .title { font-size: 1rem; }
       .sub { font-size: 0.8rem; }
       form { grid-template-columns: 1fr; }
       button { width: 100%; }
+      .add-dashboard-btn,
+      .dashboard-remove {
+        width: auto;
+      }
     }
 
     @keyframes fade {
@@ -420,34 +708,55 @@
 </head>
 <body>
   <main class="shell">
-    <header>
-      <div>
-        <h1 class="title">Notifii chatbot</h1>
-        <p class="sub">Account ID: {{ account_id }} | Session rows loaded: {{ account_data_count }}</p>
-      </div>
-      <a class="logout" href="/logout">Logout</a>
-    </header>
-
-    <section class="chat" id="chatWindow">
-      <div class="row bot">
-        <div class="bubble">
-    Hi! How are you today? I will retrieve your account data and respond with concise business answers.
+    <aside id="dashboardPanel" class="dashboard-panel">
+      <h2 class="dashboard-title">notifiiDashboard</h2>
+      <p class="dashboard-sub">Drop chart/table/report anywhere in this panel, or use Add to Dashboard below each result.</p>
+      <section class="dashboard-filter" aria-label="Dashboard date filter">
+        <div class="dashboard-filter-field">
+          <label for="dashboardDateFrom" class="dashboard-filter-label">From date</label>
+          <input id="dashboardDateFrom" class="dashboard-date-input" type="date">
         </div>
-      </div>
-    </section>
+        <div class="dashboard-filter-field">
+          <label for="dashboardDateTo" class="dashboard-filter-label">To date</label>
+          <input id="dashboardDateTo" class="dashboard-date-input" type="date">
+        </div>
+        <button id="dashboardApplyDateFilter" class="dashboard-filter-btn" type="button">Apply</button>
+        <button id="dashboardClearDateFilter" class="dashboard-filter-btn secondary" type="button">Clear</button>
+        <div id="dashboardFilterStatus" class="dashboard-filter-status"></div>
+      </section>
+      <div id="dashboardItems" class="dashboard-items" aria-live="polite"></div>
+    </aside>
 
-    <form id="chatForm">
-      <div id="typingIndicator" class="typing-indicator" aria-live="polite" aria-hidden="true">
-        Notifii is thinking
-        <span class="typing-dots" aria-hidden="true">
-          <span class="typing-dot"></span>
-          <span class="typing-dot"></span>
-          <span class="typing-dot"></span>
-        </span>
-      </div>
-      <textarea id="messageInput" placeholder="Example: show latest 10 tracking records for my account" required></textarea>
-      <button id="sendBtn" type="submit">Send</button>
-    </form>
+    <section class="chat-shell">
+      <header>
+        <div>
+          <h1 class="title">Notifii chatbot</h1>
+          <p class="sub">Account ID: {{ account_id }} | Session rows loaded: {{ account_data_count }}</p>
+        </div>
+        <a class="logout" href="/logout">Logout</a>
+      </header>
+
+      <section class="chat" id="chatWindow">
+        <div class="row bot">
+          <div class="bubble">
+    Hi! How are you today? I will retrieve your account data and respond with concise business answers.
+          </div>
+        </div>
+      </section>
+
+      <form id="chatForm">
+        <div id="typingIndicator" class="typing-indicator" aria-live="polite" aria-hidden="true">
+          Notifii is thinking
+          <span class="typing-dots" aria-hidden="true">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+          </span>
+        </div>
+        <textarea id="messageInput" placeholder="Example: show latest 10 tracking records for my account" required></textarea>
+        <button id="sendBtn" type="submit">Send</button>
+      </form>
+    </section>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -457,6 +766,15 @@
     const messageInput = document.getElementById("messageInput");
     const sendBtn = document.getElementById("sendBtn");
     const typingIndicator = document.getElementById("typingIndicator");
+    const dashboardPanel = document.getElementById("dashboardPanel");
+    const dashboardItems = document.getElementById("dashboardItems");
+    const dashboardDateFrom = document.getElementById("dashboardDateFrom");
+    const dashboardDateTo = document.getElementById("dashboardDateTo");
+    const dashboardApplyDateFilter = document.getElementById("dashboardApplyDateFilter");
+    const dashboardClearDateFilter = document.getElementById("dashboardClearDateFilter");
+    const dashboardFilterStatus = document.getElementById("dashboardFilterStatus");
+    const dashboardItemSignatures = new Set();
+    const dashboardPinnedSources = new Set();
 
     function setTypingIndicator(isVisible) {
       typingIndicator.classList.toggle("visible", isVisible);
@@ -504,14 +822,826 @@
       return bubble;
     }
 
+    function serializeResultElement(resultElement) {
+      const clone = resultElement.cloneNode(true);
+      const clonedChartWraps = clone.querySelectorAll(".chart-wrap[data-chart-payload]");
+      if (clonedChartWraps.length > 0) {
+        clonedChartWraps.forEach((chartWrap) => {
+          const viewport = chartWrap.querySelector(".chart-viewport");
+          if (!viewport) {
+            return;
+          }
+          viewport.innerHTML = "";
+          const canvas = document.createElement("canvas");
+          canvas.className = "chart-canvas";
+          viewport.appendChild(canvas);
+        });
+        return clone.outerHTML;
+      }
+
+      const sourceCanvases = resultElement.querySelectorAll("canvas");
+      const cloneCanvases = clone.querySelectorAll("canvas");
+
+      cloneCanvases.forEach((canvasClone, index) => {
+        const sourceCanvas = sourceCanvases[index];
+        if (!sourceCanvas) {
+          return;
+        }
+
+        const image = document.createElement("img");
+        image.className = "chart-image";
+        image.alt = "Saved chart";
+        image.src = sourceCanvas.toDataURL("image/png");
+        canvasClone.replaceWith(image);
+      });
+
+      return clone.outerHTML;
+    }
+
+    function normalizeDashboardMarkup(html) {
+      return String(html || "")
+        .replace(/\s+/g, " ")
+        .replace(/>\s+</g, "><")
+        .trim();
+    }
+
+    function makeDashboardSignature(label, contentHtml) {
+      return `${String(label || "Saved result").trim()}::${normalizeDashboardMarkup(contentHtml)}`;
+    }
+
+    function parseDateToMs(value) {
+      if (value === null || value === undefined) {
+        return null;
+      }
+
+      const text = String(value).trim();
+      if (!text) {
+        return null;
+      }
+
+      if (/^\d{8}$/.test(text)) {
+        const year = Number(text.slice(0, 4));
+        const month = Number(text.slice(4, 6));
+        const day = Number(text.slice(6, 8));
+        const date = new Date(year, month - 1, day);
+        return Number.isFinite(date.getTime()) ? date.getTime() : null;
+      }
+
+      const parsed = Date.parse(text.replace(/\//g, "-"));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function getDashboardDateRange() {
+      const fromValue = dashboardDateFrom.value;
+      const toValue = dashboardDateTo.value;
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime();
+
+      if (!fromValue && !toValue) {
+        return { active: false, fromMs: null, toMs: null, fromIso: "", toIso: "" };
+      }
+
+      let fromMs = fromValue ? Date.parse(`${fromValue}T00:00:00`) : null;
+      let toMs = toValue ? Date.parse(`${toValue}T23:59:59.999`) : null;
+
+      if (fromMs !== null && !Number.isFinite(fromMs)) {
+        fromMs = null;
+      }
+      if (toMs !== null && !Number.isFinite(toMs)) {
+        toMs = null;
+      }
+
+      // Never allow future dates in dashboard date filters.
+      if (fromMs !== null && fromMs > todayStart) {
+        fromMs = todayStart;
+      }
+      if (toMs !== null && toMs > todayEnd) {
+        toMs = todayEnd;
+      }
+
+      if (fromMs !== null && toMs !== null && fromMs > toMs) {
+        const temp = fromMs;
+        fromMs = toMs;
+        toMs = temp;
+      }
+
+      let fromIso = fromValue || "";
+      let toIso = toValue || "";
+      if (fromIso && toIso && fromIso > toIso) {
+        const temp = fromIso;
+        fromIso = toIso;
+        toIso = temp;
+      }
+
+      const todayIso = now.toISOString().slice(0, 10);
+      if (fromIso && fromIso > todayIso) {
+        fromIso = todayIso;
+        dashboardDateFrom.value = todayIso;
+      }
+      if (toIso && toIso > todayIso) {
+        toIso = todayIso;
+        dashboardDateTo.value = todayIso;
+      }
+
+      return { active: true, fromMs, toMs, fromIso, toIso };
+    }
+
+    function isInDateRange(ms, range) {
+      if (ms === null || ms === undefined || !Number.isFinite(ms)) {
+        return false;
+      }
+      if (range.fromMs !== null && ms < range.fromMs) {
+        return false;
+      }
+      if (range.toMs !== null && ms > range.toMs) {
+        return false;
+      }
+      return true;
+    }
+
+    function filterChartPayloadByDate(basePayload, range) {
+      const chartType = String(basePayload.chart_type || "bar").toLowerCase();
+      const filteredPayload = JSON.parse(JSON.stringify(basePayload));
+
+      if (!range.active) {
+        return { payload: filteredPayload, applicable: false, total: 0, kept: 0 };
+      }
+
+      if (chartType === "scatter") {
+        const xValues = Array.isArray(basePayload.x_values) ? basePayload.x_values : [];
+        const yValues = Array.isArray(basePayload.y_values) ? basePayload.y_values : [];
+        if (xValues.length === 0 || xValues.length !== yValues.length) {
+          return { payload: filteredPayload, applicable: false, total: 0, kept: 0 };
+        }
+
+        const parsedDates = xValues.map((value) => parseDateToMs(value));
+        const validDateCount = parsedDates.filter((value) => value !== null).length;
+        if (validDateCount === 0) {
+          return { payload: filteredPayload, applicable: false, total: 0, kept: 0 };
+        }
+
+        const keepIndexes = [];
+        parsedDates.forEach((parsedDate, index) => {
+          if (isInDateRange(parsedDate, range)) {
+            keepIndexes.push(index);
+          }
+        });
+
+        filteredPayload.x_values = keepIndexes.map((index) => xValues[index]);
+        filteredPayload.y_values = keepIndexes.map((index) => yValues[index]);
+        filteredPayload.point_count = keepIndexes.length;
+        return { payload: filteredPayload, applicable: true, total: xValues.length, kept: keepIndexes.length };
+      }
+
+      const labels = Array.isArray(basePayload.labels) ? basePayload.labels : [];
+      const values = Array.isArray(basePayload.values) ? basePayload.values : [];
+      if (labels.length === 0 || values.length === 0 || labels.length !== values.length) {
+        return { payload: filteredPayload, applicable: false, total: 0, kept: 0 };
+      }
+
+      const parsedDates = labels.map((label) => parseDateToMs(label));
+      const validDateCount = parsedDates.filter((value) => value !== null).length;
+      if (validDateCount === 0) {
+        return { payload: filteredPayload, applicable: false, total: 0, kept: 0 };
+      }
+
+      const keepIndexes = [];
+      parsedDates.forEach((parsedDate, index) => {
+        if (isInDateRange(parsedDate, range)) {
+          keepIndexes.push(index);
+        }
+      });
+
+      const filterParallelArray = (sourceArray) => {
+        if (!Array.isArray(sourceArray) || sourceArray.length !== labels.length) {
+          return sourceArray;
+        }
+        return keepIndexes.map((index) => sourceArray[index]);
+      };
+
+      filteredPayload.labels = keepIndexes.map((index) => labels[index]);
+      filteredPayload.values = keepIndexes.map((index) => values[index]);
+      filteredPayload.count_values = filterParallelArray(basePayload.count_values);
+      filteredPayload.percentage_values = filterParallelArray(basePayload.percentage_values);
+      filteredPayload.point_count = keepIndexes.length;
+      return { payload: filteredPayload, applicable: true, total: labels.length, kept: keepIndexes.length };
+    }
+
+    function setDashboardFilterStatus(text) {
+      dashboardFilterStatus.textContent = text;
+    }
+
+    async function fetchDashboardFilteredChart(filterContext, dateRange) {
+      try {
+        const response = await fetch("/chatbot/dashboard/filter", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filter_context: filterContext,
+            from_date: dateRange.fromIso || "",
+            to_date: dateRange.toIso || "",
+          }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          return null;
+        }
+
+        if (data && data.status === "ok") {
+          return {
+            chart: data.chart || null,
+            summary: data.summary || {},
+            empty: !data.chart,
+          };
+        }
+      } catch (error) {
+        return null;
+      }
+      return null;
+    }
+
+    async function applyDashboardDateFilter() {
+      const dateRange = getDashboardDateRange();
+      const chartWraps = Array.from(dashboardItems.querySelectorAll(".chart-wrap[data-chart-payload]"));
+
+      let applicableCount = 0;
+      let totalVisiblePoints = 0;
+      let backendAppliedCount = 0;
+      let backendTotalPackages = 0;
+
+      for (const chartWrap of chartWraps) {
+        const originalPayloadText = chartWrap.getAttribute("data-original-chart-payload") || chartWrap.getAttribute("data-chart-payload") || "";
+        if (!originalPayloadText) {
+          continue;
+        }
+
+        if (!chartWrap.getAttribute("data-original-chart-payload")) {
+          chartWrap.setAttribute("data-original-chart-payload", originalPayloadText);
+        }
+
+        let originalPayload = null;
+        try {
+          originalPayload = JSON.parse(originalPayloadText);
+        } catch (error) {
+          continue;
+        }
+
+        const filterContext =
+          originalPayload && typeof originalPayload.dashboard_filter_context === "object"
+            ? originalPayload.dashboard_filter_context
+            : null;
+
+        let payloadToRender = originalPayload;
+        let handledByBackend = false;
+
+        if (filterContext && filterContext.kind) {
+          const serverResult = await fetchDashboardFilteredChart(filterContext, dateRange);
+          if (serverResult) {
+            handledByBackend = true;
+            backendAppliedCount += 1;
+            applicableCount += 1;
+            const totalPackages = Number(serverResult.summary && serverResult.summary.total_packages);
+            if (Number.isFinite(totalPackages)) {
+              backendTotalPackages += totalPackages;
+            }
+
+            if (serverResult.chart) {
+              payloadToRender = serverResult.chart;
+              totalVisiblePoints += Number(serverResult.chart.point_count || 0);
+            } else {
+              payloadToRender = {
+                ...originalPayload,
+                labels: [],
+                values: [],
+                x_values: [],
+                y_values: [],
+                point_count: 0,
+              };
+            }
+          }
+        }
+
+        if (!handledByBackend) {
+          const filterResult = filterChartPayloadByDate(originalPayload, dateRange);
+          if (dateRange.active && filterResult.applicable) {
+            applicableCount += 1;
+            totalVisiblePoints += filterResult.kept;
+          }
+
+          payloadToRender = dateRange.active && filterResult.applicable ? filterResult.payload : originalPayload;
+        }
+
+        chartWrap.setAttribute("data-chart-payload", JSON.stringify(payloadToRender));
+        const viewport = chartWrap.querySelector(".chart-viewport");
+        renderChartIntoViewport(viewport, payloadToRender, "dashboard");
+      }
+
+      if (!dateRange.active) {
+        setDashboardFilterStatus("Date filter is cleared. Showing all dashboard charts.");
+      } else if (applicableCount === 0) {
+        setDashboardFilterStatus("Date filter applied: no date axis detected in current dashboard charts.");
+      } else if (backendAppliedCount > 0) {
+        setDashboardFilterStatus(
+          `Date filter applied to ${applicableCount} chart(s). Total delivered packages: ${Math.round(backendTotalPackages)}.`
+        );
+      } else {
+        setDashboardFilterStatus(`Date filter applied to ${applicableCount} chart(s). Visible points: ${totalVisiblePoints}.`);
+      }
+    }
+
+    function getNumericValues(rawValues) {
+      if (!Array.isArray(rawValues)) {
+        return [];
+      }
+      return rawValues
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value));
+    }
+
+    function compactChartLabel(value, maxLength = 22) {
+      const text = String(value === null || value === undefined ? "" : value).trim();
+      if (!text) {
+        return "";
+      }
+      if (text.length <= maxLength) {
+        return text;
+      }
+      return `${text.slice(0, Math.max(3, maxLength - 1)).trim()}...`;
+    }
+
+    function makeChartAxisOptions(mode, chartPayload, chartType, yLabelOverride = "") {
+      const isDashboard = mode === "dashboard";
+      const xField = chartPayload.x_field || chartPayload.group_field || "Category";
+      const yField = yLabelOverride || chartPayload.y_field || "Value";
+      const xTickSize = isDashboard ? 13 : 11;
+      const yTickSize = isDashboard ? 13 : 11;
+
+      if (chartType === "pie") {
+        return undefined;
+      }
+
+      return {
+        x: {
+          title: {
+            display: true,
+            text: xField,
+            color: "#1f3744",
+            font: { size: isDashboard ? 13 : 11, weight: "700" },
+            padding: { top: isDashboard ? 10 : 8 },
+          },
+          ticks: {
+            color: "#344e5a",
+            font: { size: xTickSize, weight: "600" },
+            autoSkip: true,
+            maxRotation: isDashboard ? 0 : 34,
+            minRotation: isDashboard ? 0 : 14,
+            maxTicksLimit: isDashboard ? 8 : 12,
+            padding: isDashboard ? 8 : 6,
+          },
+          grid: {
+            color: "rgba(20, 49, 63, 0.08)",
+          },
+        },
+        y: {
+          beginAtZero: true,
+          title: {
+            display: true,
+            text: yField,
+            color: "#1f3744",
+            font: { size: isDashboard ? 13 : 11, weight: "700" },
+            padding: { bottom: isDashboard ? 6 : 4 },
+          },
+          ticks: {
+            color: "#344e5a",
+            font: { size: yTickSize, weight: "600" },
+            padding: isDashboard ? 8 : 6,
+          },
+          grid: {
+            color: "rgba(20, 49, 63, 0.08)",
+          },
+        },
+      };
+    }
+
+    function buildChartConfig(chartPayload, mode) {
+      const labels = Array.isArray(chartPayload.labels) ? chartPayload.labels : [];
+      const originalLabels = [...labels];
+      const labelsForChart = mode === "dashboard"
+        ? labels.map((label) => compactChartLabel(label, 22))
+        : labels;
+      const values = getNumericValues(chartPayload.values);
+      const xValues = getNumericValues(chartPayload.x_values);
+      const yValues = getNumericValues(chartPayload.y_values);
+      const chartType = String(chartPayload.chart_type || "bar").toLowerCase();
+      const isDashboard = mode === "dashboard";
+
+      const basePlugins = {
+        title: {
+          display: !!chartPayload.title,
+          text: chartPayload.title || "",
+          color: "#1f3744",
+          font: { size: isDashboard ? 18 : 14, weight: "700" },
+          padding: { top: 6, bottom: isDashboard ? 12 : 8 },
+        },
+        legend: {
+          display: true,
+          position: "top",
+          labels: {
+            color: "#2d4955",
+            font: { size: isDashboard ? 13 : 11, weight: "600" },
+            boxWidth: isDashboard ? 22 : 16,
+            padding: isDashboard ? 14 : 10,
+          },
+        },
+        tooltip: {
+          enabled: true,
+          titleFont: { size: isDashboard ? 13 : 11 },
+          bodyFont: { size: isDashboard ? 13 : 11 },
+          callbacks: {
+            title: (items) => {
+              if (!Array.isArray(items) || items.length === 0) {
+                return "";
+              }
+              const index = Number(items[0].dataIndex);
+              if (Number.isFinite(index) && index >= 0 && index < originalLabels.length) {
+                return String(originalLabels[index]);
+              }
+              return items[0].label || "";
+            },
+          },
+        },
+      };
+
+      let config = null;
+      if ((chartType === "bar" || chartType === "line" || chartType === "pie") && labels.length > 0 && values.length > 0) {
+        config = {
+          type: chartType,
+          data: {
+            labels: labelsForChart,
+            datasets: [{
+              label: chartPayload.y_field || "value",
+              data: values,
+              borderColor: "#d66500",
+              borderWidth: isDashboard ? 2 : 1.5,
+              backgroundColor: chartType === "pie"
+                ? ["#ff7f11", "#1f77b4", "#2a9d8f", "#e76f51", "#264653", "#a8dadc", "#457b9d", "#f4a261", "#e9c46a", "#6a4c93", "#8ac926", "#1982c4", "#ffca3a"]
+                : "rgba(255, 127, 17, 0.75)",
+              fill: chartType !== "line",
+              tension: chartType === "line" ? 0.25 : 0,
+              pointRadius: chartType === "line" ? (isDashboard ? 3 : 2.3) : 0,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            layout: {
+              padding: {
+                top: isDashboard ? 8 : 4,
+                right: isDashboard ? 12 : 8,
+                bottom: isDashboard ? 8 : 4,
+                left: isDashboard ? 10 : 6,
+              },
+            },
+            plugins: basePlugins,
+            scales: makeChartAxisOptions(mode, chartPayload, chartType),
+          },
+        };
+      } else if (chartType === "scatter" && xValues.length > 0 && yValues.length > 0 && xValues.length === yValues.length) {
+        config = {
+          type: "scatter",
+          data: {
+            datasets: [{
+              label: chartPayload.y_field || "value",
+              data: xValues.map((x, i) => ({ x, y: yValues[i] })),
+              backgroundColor: "rgba(42, 157, 143, 0.8)",
+              pointRadius: isDashboard ? 4 : 3,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "nearest", intersect: false },
+            layout: {
+              padding: {
+                top: isDashboard ? 8 : 4,
+                right: isDashboard ? 12 : 8,
+                bottom: isDashboard ? 8 : 4,
+                left: isDashboard ? 10 : 6,
+              },
+            },
+            plugins: basePlugins,
+            scales: makeChartAxisOptions(mode, chartPayload, chartType),
+          },
+        };
+      } else if (chartType === "histogram" && values.length > 0) {
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const bins = Math.max(4, Math.min(12, Math.floor(values.length / 2)));
+        const width = bins > 0 ? (max - min || 1) / bins : 1;
+        const counts = new Array(bins).fill(0);
+        for (const value of values) {
+          const rawIndex = Math.floor((value - min) / width);
+          const idx = Math.max(0, Math.min(bins - 1, rawIndex));
+          counts[idx] += 1;
+        }
+        const histLabels = counts.map((_, i) => `${(min + i * width).toFixed(1)}-${(min + (i + 1) * width).toFixed(1)}`);
+        config = {
+          type: "bar",
+          data: {
+            labels: histLabels,
+            datasets: [{
+              label: "Frequency",
+              data: counts,
+              backgroundColor: "rgba(38, 70, 83, 0.78)",
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            layout: {
+              padding: {
+                top: isDashboard ? 8 : 4,
+                right: isDashboard ? 12 : 8,
+                bottom: isDashboard ? 8 : 4,
+                left: isDashboard ? 10 : 6,
+              },
+            },
+            plugins: basePlugins,
+            scales: makeChartAxisOptions(mode, chartPayload, chartType, "Frequency"),
+          },
+        };
+      }
+
+      return config;
+    }
+
+    function renderChartIntoViewport(viewport, chartPayload, mode) {
+      if (!viewport || !chartPayload) {
+        return false;
+      }
+
+      viewport.innerHTML = "";
+      const canvas = document.createElement("canvas");
+      canvas.className = "chart-canvas";
+      viewport.appendChild(canvas);
+
+      const config = buildChartConfig(chartPayload, mode);
+      if (!config) {
+        viewport.innerHTML = "";
+        return false;
+      }
+
+      new Chart(canvas.getContext("2d"), config);
+      return true;
+    }
+
+    function hydrateDashboardCharts(container) {
+      const chartWraps = container.querySelectorAll(".chart-wrap[data-chart-payload]");
+      chartWraps.forEach((chartWrap) => {
+        const payloadText = chartWrap.getAttribute("data-chart-payload") || "";
+        if (!payloadText) {
+          return;
+        }
+
+        if (!chartWrap.getAttribute("data-original-chart-payload")) {
+          chartWrap.setAttribute("data-original-chart-payload", payloadText);
+        }
+
+        let chartPayload = null;
+        try {
+          chartPayload = JSON.parse(payloadText);
+        } catch (error) {
+          return;
+        }
+
+        const viewport = chartWrap.querySelector(".chart-viewport");
+        renderChartIntoViewport(viewport, chartPayload, "dashboard");
+      });
+    }
+
+    function addDashboardCard(label, contentHtml, sourceId = "") {
+      if (!contentHtml) {
+        return false;
+      }
+
+      const normalizedSourceId = String(sourceId || "").trim();
+      if (normalizedSourceId && dashboardPinnedSources.has(normalizedSourceId)) {
+        return false;
+      }
+
+      const signature = makeDashboardSignature(label, contentHtml);
+      if (dashboardItemSignatures.has(signature)) {
+        return false;
+      }
+
+      const card = document.createElement("article");
+      card.className = "dashboard-card";
+      card.dataset.signature = signature;
+
+      const head = document.createElement("div");
+      head.className = "dashboard-card-head";
+
+      const title = document.createElement("span");
+      title.textContent = label;
+
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.className = "dashboard-remove";
+      removeButton.textContent = "Remove";
+      removeButton.addEventListener("click", () => {
+        const cardSignature = card.dataset.signature || "";
+        if (cardSignature) {
+          dashboardItemSignatures.delete(cardSignature);
+        }
+        const pinnedSourceId = card.dataset.sourceId || "";
+        if (pinnedSourceId) {
+          dashboardPinnedSources.delete(pinnedSourceId);
+          unlockDashboardSource(pinnedSourceId);
+        }
+        card.remove();
+      });
+
+      head.appendChild(title);
+      head.appendChild(removeButton);
+
+      const body = document.createElement("div");
+      body.className = "dashboard-card-body";
+      body.innerHTML = contentHtml;
+      hydrateDashboardCharts(body);
+
+      card.appendChild(head);
+      card.appendChild(body);
+      dashboardItems.appendChild(card);
+      dashboardItemSignatures.add(signature);
+      if (normalizedSourceId) {
+        card.dataset.sourceId = normalizedSourceId;
+        dashboardPinnedSources.add(normalizedSourceId);
+        lockDashboardSource(normalizedSourceId);
+      }
+      void applyDashboardDateFilter();
+      return true;
+    }
+
+    function lockDashboardSource(sourceId) {
+      const source = document.querySelector(`[data-dashboard-source-id="${CSS.escape(sourceId)}"]`);
+      if (!source) {
+        return;
+      }
+
+      source.setAttribute("draggable", "false");
+      source.classList.remove("dashboard-source");
+
+      const actionButton = source.nextElementSibling?.querySelector(".add-dashboard-btn");
+      if (actionButton) {
+        actionButton.disabled = true;
+        actionButton.textContent = "Added";
+      }
+    }
+
+    function unlockDashboardSource(sourceId) {
+      const source = document.querySelector(`[data-dashboard-source-id="${CSS.escape(sourceId)}"]`);
+      if (!source) {
+        return;
+      }
+
+      source.setAttribute("draggable", "true");
+      source.classList.add("dashboard-source");
+
+      const actionButton = source.nextElementSibling?.querySelector(".add-dashboard-btn");
+      if (actionButton) {
+        actionButton.disabled = false;
+        actionButton.textContent = "Add to Dashboard";
+      }
+    }
+
+    function wireResultToDashboard(resultElement, label) {
+      if (!resultElement) {
+        return;
+      }
+
+      const sourceId = `source-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      resultElement.dataset.dashboardSourceId = sourceId;
+
+      resultElement.classList.add("dashboard-source");
+      resultElement.setAttribute("draggable", "true");
+      resultElement.addEventListener("dragstart", (event) => {
+        if (dashboardPinnedSources.has(sourceId)) {
+          event.preventDefault();
+          return;
+        }
+
+        const html = serializeResultElement(resultElement);
+        event.dataTransfer.setData("text/html", html);
+        event.dataTransfer.setData("text/plain", label);
+        event.dataTransfer.setData("application/x-dashboard-source-id", sourceId);
+        event.dataTransfer.effectAllowed = "copy";
+      });
+
+      const actions = document.createElement("div");
+      actions.className = "result-actions";
+
+      const hint = document.createElement("span");
+      hint.className = "result-hint";
+      hint.textContent = "Drag to notifiiDashboard or click Add to Dashboard";
+
+      const addButton = document.createElement("button");
+      addButton.type = "button";
+      addButton.className = "add-dashboard-btn";
+      addButton.textContent = "Add to Dashboard";
+      addButton.addEventListener("click", () => {
+        if (dashboardPinnedSources.has(sourceId)) {
+          addButton.textContent = "Added";
+          return;
+        }
+
+        const html = serializeResultElement(resultElement);
+        const added = addDashboardCard(label, html, sourceId);
+        if (!added) {
+          addButton.textContent = "Already Added";
+          setTimeout(() => {
+            addButton.textContent = dashboardPinnedSources.has(sourceId) ? "Added" : "Add to Dashboard";
+          }, 900);
+        }
+      });
+
+      actions.appendChild(hint);
+      actions.appendChild(addButton);
+      resultElement.insertAdjacentElement("afterend", actions);
+    }
+
+    function setupDashboardDropZone() {
+      const preventDefaults = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      };
+
+      const enter = (event) => {
+        preventDefaults(event);
+        dashboardPanel.classList.add("drag-over");
+      };
+
+      const leave = (event) => {
+        preventDefaults(event);
+        dashboardPanel.classList.remove("drag-over");
+      };
+
+      const drop = (event) => {
+        preventDefaults(event);
+        dashboardPanel.classList.remove("drag-over");
+        const contentHtml = event.dataTransfer.getData("text/html");
+        const label = event.dataTransfer.getData("text/plain") || "Saved result";
+        const sourceId = event.dataTransfer.getData("application/x-dashboard-source-id") || "";
+        if (contentHtml) {
+          addDashboardCard(label, contentHtml, sourceId);
+        }
+      };
+
+      [dashboardPanel, dashboardItems].forEach((target) => {
+        ["dragenter", "dragover"].forEach((eventName) => {
+          target.addEventListener(eventName, enter);
+        });
+        ["dragleave", "drop"].forEach((eventName) => {
+          target.addEventListener(eventName, leave);
+        });
+        target.addEventListener("drop", drop);
+      });
+    }
+
+    function setupDashboardWheelAssist() {
+      // Keep native browser scrolling for dashboard so it matches chat behavior.
+      // Intentionally left as a no-op to avoid wheel interception side effects.
+    }
+
+    function setupDashboardDateFilter() {
+      dashboardApplyDateFilter.addEventListener("click", () => {
+        void applyDashboardDateFilter();
+      });
+
+      dashboardClearDateFilter.addEventListener("click", () => {
+        dashboardDateFrom.value = "";
+        dashboardDateTo.value = "";
+        void applyDashboardDateFilter();
+      });
+
+      [dashboardDateFrom, dashboardDateTo].forEach((input) => {
+        input.addEventListener("change", () => {
+          void applyDashboardDateFilter();
+        });
+      });
+    }
+
     function appendTableToBubble(bubble, rows) {
       if (!bubble || !Array.isArray(rows) || rows.length === 0) {
-        return;
+        return null;
       }
 
       const columns = Object.keys(rows[0]);
       if (columns.length === 0) {
-        return;
+        return null;
       }
 
       const wrap = document.createElement("div");
@@ -550,11 +1680,12 @@
       table.appendChild(tbody);
       wrap.appendChild(table);
       bubble.appendChild(wrap);
+      return wrap;
     }
 
     function appendKeyValueToBubble(bubble, rows) {
       if (!bubble || !Array.isArray(rows) || rows.length === 0) {
-        return;
+        return null;
       }
 
       const isEmptyValue = (value) => {
@@ -599,15 +1730,16 @@
       }
 
       if (wrap.children.length === 0) {
-        return;
+        return null;
       }
 
       bubble.appendChild(wrap);
+      return wrap;
     }
 
     function appendChartToBubble(bubble, chartPayload) {
       if (!bubble || !chartPayload) {
-        return;
+        return null;
       }
 
       bubble.classList.add("chart-bubble");
@@ -626,88 +1758,8 @@
         img.src = `data:image/png;base64,${chartPayload.image_base64}`;
         viewport.appendChild(img);
       } else {
-        const canvas = document.createElement("canvas");
-        canvas.className = "chart-canvas";
-        viewport.appendChild(canvas);
-
-        const labels = Array.isArray(chartPayload.labels) ? chartPayload.labels : [];
-        const values = Array.isArray(chartPayload.values) ? chartPayload.values : [];
-        const xValues = Array.isArray(chartPayload.x_values) ? chartPayload.x_values : [];
-        const yValues = Array.isArray(chartPayload.y_values) ? chartPayload.y_values : [];
-        const chartType = String(chartPayload.chart_type || "bar").toLowerCase();
-
-        let config = null;
-        if ((chartType === "bar" || chartType === "line" || chartType === "pie") && labels.length > 0 && values.length > 0) {
-          config = {
-            type: chartType,
-            data: {
-              labels,
-              datasets: [{
-                label: chartPayload.y_field || "value",
-                data: values,
-                borderColor: "#d66500",
-                backgroundColor: chartType === "pie"
-                  ? ["#ff7f11", "#1f77b4", "#2a9d8f", "#e76f51", "#264653", "#a8dadc", "#457b9d", "#f4a261", "#e9c46a", "#6a4c93", "#8ac926", "#1982c4", "#ffca3a"]
-                  : "rgba(255, 127, 17, 0.72)",
-                fill: chartType !== "line",
-                tension: chartType === "line" ? 0.25 : 0,
-              }],
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { title: { display: !!chartPayload.title, text: chartPayload.title || "" } },
-            },
-          };
-        } else if (chartType === "scatter" && xValues.length > 0 && yValues.length > 0 && xValues.length === yValues.length) {
-          config = {
-            type: "scatter",
-            data: {
-              datasets: [{
-                label: chartPayload.y_field || "value",
-                data: xValues.map((x, i) => ({ x, y: yValues[i] })),
-                backgroundColor: "rgba(42, 157, 143, 0.75)",
-              }],
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { title: { display: !!chartPayload.title, text: chartPayload.title || "" } },
-            },
-          };
-        } else if (chartType === "histogram" && values.length > 0) {
-          const min = Math.min(...values);
-          const max = Math.max(...values);
-          const bins = Math.max(4, Math.min(12, Math.floor(values.length / 2)));
-          const width = bins > 0 ? (max - min || 1) / bins : 1;
-          const counts = new Array(bins).fill(0);
-          for (const value of values) {
-            const rawIndex = Math.floor((value - min) / width);
-            const idx = Math.max(0, Math.min(bins - 1, rawIndex));
-            counts[idx] += 1;
-          }
-          const histLabels = counts.map((_, i) => `${(min + i * width).toFixed(1)}-${(min + (i + 1) * width).toFixed(1)}`);
-          config = {
-            type: "bar",
-            data: {
-              labels: histLabels,
-              datasets: [{
-                label: "Frequency",
-                data: counts,
-                backgroundColor: "rgba(38, 70, 83, 0.78)",
-              }],
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { title: { display: !!chartPayload.title, text: chartPayload.title || "" } },
-            },
-          };
-        }
-
-        if (config) {
-          new Chart(canvas.getContext("2d"), config);
-        }
+        wrap.setAttribute("data-chart-payload", JSON.stringify(chartPayload));
+        renderChartIntoViewport(viewport, chartPayload, "chat");
       }
 
       const details = [];
@@ -751,11 +1803,12 @@
       }
 
       bubble.appendChild(wrap);
+      return wrap;
     }
 
     function appendReportToBubble(bubble, reportPayload) {
       if (!bubble || !reportPayload) {
-        return;
+        return null;
       }
 
       const wrap = document.createElement("div");
@@ -798,7 +1851,18 @@
       }
 
       bubble.appendChild(wrap);
+      return wrap;
     }
+
+    setupDashboardDropZone();
+    setupDashboardWheelAssist();
+    setupDashboardDateFilter();
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    dashboardDateFrom.setAttribute("max", todayIso);
+    dashboardDateTo.setAttribute("max", todayIso);
+
+    void applyDashboardDateFilter();
 
     chatForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -829,14 +1893,18 @@
         } else {
           const bubble = appendMessage("bot", data.answer, uiMeta);
           if (data.report) {
-            appendReportToBubble(bubble, data.report);
+            const reportElement = appendReportToBubble(bubble, data.report);
+            wireResultToDashboard(reportElement, "Report");
           }
           if (data.display === "chart" && data.chart) {
-            appendChartToBubble(bubble, data.chart);
+            const chartElement = appendChartToBubble(bubble, data.chart);
+            wireResultToDashboard(chartElement, "Chart");
           } else if (data.display === "table" && Array.isArray(data.rows) && data.rows.length > 0) {
-            appendTableToBubble(bubble, data.rows);
+            const tableElement = appendTableToBubble(bubble, data.rows);
+            wireResultToDashboard(tableElement, "Table");
           } else if (data.display === "key_value" && Array.isArray(data.rows) && data.rows.length > 0) {
-            appendKeyValueToBubble(bubble, data.rows);
+            const keyValueElement = appendKeyValueToBubble(bubble, data.rows);
+            wireResultToDashboard(keyValueElement, "Details");
           }
         }
 
