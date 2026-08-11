@@ -21,6 +21,7 @@
       --table-head: #183542;
       --table-head-ink: #f8fafb;
       --table-row-alt: #f9fcfd;
+      --dashboard-tile-height: clamp(280px, calc((100dvh - 250px) / 2), 420px);
     }
 
     * { box-sizing: border-box; }
@@ -61,7 +62,8 @@
       padding: 16px;
       border-right: 1px solid var(--border);
       background: linear-gradient(180deg, #edf4f7, #f8fbfc);
-      overflow: auto;
+      overflow-y: auto;
+      overflow-x: hidden;
       min-height: 0;
       height: 100%;
       scrollbar-gutter: stable both-edges;
@@ -95,11 +97,15 @@
     .dashboard-items {
       padding-right: 6px;
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-auto-rows: var(--dashboard-tile-height);
       gap: 10px;
       min-height: 0;
+      flex: 0 0 auto;
+      overflow: visible;
       width: 100%;
       align-content: start;
+      padding-bottom: 10px;
     }
 
     .dashboard-items,
@@ -209,6 +215,10 @@
       flex: 0 0 auto;
       width: 100%;
       min-width: 0;
+      min-height: var(--dashboard-tile-height);
+      height: var(--dashboard-tile-height);
+      display: grid;
+      grid-template-rows: auto 1fr;
     }
 
     .dashboard-card-head {
@@ -244,8 +254,10 @@
     .dashboard-card-body {
       padding: 10px;
       overflow-x: auto;
-      overflow-y: hidden;
+      overflow-y: auto;
       scrollbar-gutter: stable;
+      min-height: 0;
+      max-height: none;
     }
 
     .dashboard-card .table-wrap,
@@ -258,11 +270,15 @@
     .dashboard-card .chart-wrap {
       min-width: 0;
       width: 100%;
+      overflow: auto;
+      min-height: calc(var(--dashboard-tile-height) - 92px);
     }
 
     .dashboard-card .chart-viewport {
-      height: clamp(220px, 30vh, 300px);
+      height: calc(var(--dashboard-tile-height) - 116px);
       min-width: 0;
+      min-height: 210px;
+      overflow: auto;
     }
 
     .dashboard-card .result-table {
@@ -666,6 +682,11 @@
       }
       .dashboard-items {
         grid-template-columns: 1fr;
+        grid-auto-rows: minmax(260px, 46vh);
+      }
+      .dashboard-card {
+        min-height: 260px;
+        height: auto;
       }
       .dashboard-card .chart-wrap,
       .dashboard-card .chart-viewport {
