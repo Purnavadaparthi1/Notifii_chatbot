@@ -912,6 +912,190 @@
       return Number.isFinite(parsed) ? parsed : null;
     }
 
+    function buildResultTableElement(rows, preferredColumns = null) {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return null;
+      }
+
+      const columns = Array.isArray(preferredColumns) && preferredColumns.length > 0
+        ? preferredColumns
+        : Object.keys(rows[0] || {});
+      if (!Array.isArray(columns) || columns.length === 0) {
+        return null;
+      }
+
+      const table = document.createElement("table");
+      table.className = "result-table";
+
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      const serialHeader = document.createElement("th");
+      serialHeader.textContent = "S.No";
+      headRow.appendChild(serialHeader);
+      for (const column of columns) {
+        const th = document.createElement("th");
+        th.textContent = column;
+        headRow.appendChild(th);
+      }
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      for (const [index, rowData] of rows.entries()) {
+        const tr = document.createElement("tr");
+        const serialCell = document.createElement("td");
+        serialCell.textContent = String(index + 1);
+        tr.appendChild(serialCell);
+
+        for (const column of columns) {
+          const td = document.createElement("td");
+          const cellValue = rowData && Object.prototype.hasOwnProperty.call(rowData, column)
+            ? rowData[column]
+            : "";
+          td.textContent = cellValue === null || cellValue === undefined ? "" : String(cellValue);
+          tr.appendChild(td);
+        }
+
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      return table;
+    }
+
+    function renderTableWrap(tableWrap, rows, preferredColumns = null) {
+      if (!tableWrap) {
+        return;
+      }
+      tableWrap.innerHTML = "";
+      const table = buildResultTableElement(rows, preferredColumns);
+      if (table) {
+        tableWrap.appendChild(table);
+      }
+    }
+
+    function extractRowsFromRenderedTable(tableWrap) {
+      const table = tableWrap ? tableWrap.querySelector("table.result-table") : null;
+      if (!table) {
+        return [];
+      }
+
+      const headerCells = Array.from(table.querySelectorAll("thead th"));
+      if (headerCells.length <= 1) {
+        return [];
+      }
+
+      const columns = headerCells.slice(1).map((th) => String(th.textContent || "").trim());
+      if (columns.length === 0) {
+        return [];
+      }
+
+      const rows = [];
+      const bodyRows = Array.from(table.querySelectorAll("tbody tr"));
+      for (const tr of bodyRows) {
+        const cells = Array.from(tr.querySelectorAll("td"));
+        if (cells.length <= 1) {
+          continue;
+        }
+
+        const rowObj = {};
+        for (let index = 0; index < columns.length; index += 1) {
+          const cell = cells[index + 1];
+          rowObj[columns[index]] = cell ? String(cell.textContent || "").trim() : "";
+        }
+        rows.push(rowObj);
+      }
+
+      return rows;
+    }
+
+    function inferDateColumnsFromRows(rows) {
+      if (!Array.isArray(rows) || rows.length === 0 || typeof rows[0] !== "object" || rows[0] === null) {
+        return [];
+      }
+
+      const columns = Object.keys(rows[0]);
+      if (columns.length === 0) {
+        return [];
+      }
+
+      const dateNamePattern = /(date|day|month|year|delivered|received|created|updated)/i;
+      const sampleRows = rows.slice(0, Math.min(rows.length, 40));
+      const scored = [];
+
+      for (const column of columns) {
+        let parseable = 0;
+        let nonEmpty = 0;
+
+        for (const row of sampleRows) {
+          if (!row || typeof row !== "object") {
+            continue;
+          }
+          const raw = row[column];
+          if (raw === null || raw === undefined || String(raw).trim() === "") {
+            continue;
+          }
+          nonEmpty += 1;
+          if (parseDateToMs(raw) !== null) {
+            parseable += 1;
+          }
+        }
+
+        if (nonEmpty === 0) {
+          continue;
+        }
+
+        const ratio = parseable / nonEmpty;
+        const byName = dateNamePattern.test(String(column || ""));
+        if (byName || ratio >= 0.6) {
+          scored.push({ column, ratio, byName });
+        }
+      }
+
+      scored.sort((a, b) => {
+        if (a.byName !== b.byName) {
+          return a.byName ? -1 : 1;
+        }
+        return b.ratio - a.ratio;
+      });
+
+      return scored.map((item) => item.column);
+    }
+
+    function filterTableRowsByDate(rows, range) {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return { rows: [], applicable: false, total: 0, kept: 0 };
+      }
+
+      if (!range.active) {
+        return { rows: rows.slice(), applicable: false, total: rows.length, kept: rows.length };
+      }
+
+      const dateColumns = inferDateColumnsFromRows(rows);
+      if (dateColumns.length === 0) {
+        return { rows: rows.slice(), applicable: false, total: rows.length, kept: rows.length };
+      }
+
+      const filteredRows = rows.filter((row) => {
+        if (!row || typeof row !== "object") {
+          return false;
+        }
+        for (const column of dateColumns) {
+          const dateMs = parseDateToMs(row[column]);
+          if (isInDateRange(dateMs, range)) {
+            return true;
+          }
+        }
+        return false;
+      });
+
+      return {
+        rows: filteredRows,
+        applicable: true,
+        total: rows.length,
+        kept: filteredRows.length,
+      };
+    }
+
     function getDashboardDateRange() {
       const fromValue = dashboardDateFrom.value;
       const toValue = dashboardDateTo.value;
@@ -1086,11 +1270,14 @@
     async function applyDashboardDateFilter() {
       const dateRange = getDashboardDateRange();
       const chartWraps = Array.from(dashboardItems.querySelectorAll(".chart-wrap[data-chart-payload]"));
+      const tableWraps = Array.from(dashboardItems.querySelectorAll(".table-wrap"));
 
       let applicableCount = 0;
       let totalVisiblePoints = 0;
       let backendAppliedCount = 0;
       let backendTotalPackages = 0;
+      let tableAppliedCount = 0;
+      let tableVisibleRows = 0;
 
       for (const chartWrap of chartWraps) {
         const originalPayloadText = chartWrap.getAttribute("data-original-chart-payload") || chartWrap.getAttribute("data-chart-payload") || "";
@@ -1159,16 +1346,75 @@
         renderChartIntoViewport(viewport, payloadToRender, "dashboard");
       }
 
+      for (const tableWrap of tableWraps) {
+        let originalRowsText =
+          tableWrap.getAttribute("data-original-table-rows") ||
+          tableWrap.getAttribute("data-table-rows") ||
+          "";
+
+        if (!originalRowsText) {
+          const extractedRows = extractRowsFromRenderedTable(tableWrap);
+          if (Array.isArray(extractedRows) && extractedRows.length > 0) {
+            originalRowsText = JSON.stringify(extractedRows);
+            tableWrap.setAttribute("data-table-rows", originalRowsText);
+            tableWrap.setAttribute("data-original-table-rows", originalRowsText);
+          }
+        }
+
+        if (!originalRowsText) {
+          continue;
+        }
+
+        if (!tableWrap.getAttribute("data-original-table-rows")) {
+          tableWrap.setAttribute("data-original-table-rows", originalRowsText);
+        }
+
+        let originalRows = null;
+        try {
+          originalRows = JSON.parse(originalRowsText);
+        } catch (error) {
+          continue;
+        }
+
+        if (!Array.isArray(originalRows) || originalRows.length === 0) {
+          continue;
+        }
+
+        const preferredColumns = Object.keys(originalRows[0] || {});
+        const tableResult = filterTableRowsByDate(originalRows, dateRange);
+        if (dateRange.active && tableResult.applicable) {
+          applicableCount += 1;
+          tableAppliedCount += 1;
+          tableVisibleRows += tableResult.kept;
+        }
+
+        const rowsToRender = dateRange.active && tableResult.applicable ? tableResult.rows : originalRows;
+        tableWrap.setAttribute("data-table-rows", JSON.stringify(rowsToRender));
+        renderTableWrap(tableWrap, rowsToRender, preferredColumns);
+      }
+
       if (!dateRange.active) {
-        setDashboardFilterStatus("Date filter is cleared. Showing all dashboard charts.");
+        setDashboardFilterStatus("Date filter is cleared. Showing all dashboard items.");
       } else if (applicableCount === 0) {
-        setDashboardFilterStatus("Date filter applied: no date axis detected in current dashboard charts.");
+        setDashboardFilterStatus("Date filter applied: no date columns/axes detected in current dashboard items.");
       } else if (backendAppliedCount > 0) {
-        setDashboardFilterStatus(
-          `Date filter applied to ${applicableCount} chart(s). Total delivered packages: ${Math.round(backendTotalPackages)}.`
-        );
+        if (tableAppliedCount > 0) {
+          setDashboardFilterStatus(
+            `Date filter applied to ${applicableCount} item(s): ${backendAppliedCount} chart(s), ${tableAppliedCount} table(s). Total delivered packages: ${Math.round(backendTotalPackages)}. Visible table rows: ${tableVisibleRows}.`
+          );
+        } else {
+          setDashboardFilterStatus(
+            `Date filter applied to ${applicableCount} chart(s). Total delivered packages: ${Math.round(backendTotalPackages)}.`
+          );
+        }
       } else {
-        setDashboardFilterStatus(`Date filter applied to ${applicableCount} chart(s). Visible points: ${totalVisiblePoints}.`);
+        if (tableAppliedCount > 0) {
+          setDashboardFilterStatus(
+            `Date filter applied to ${applicableCount} item(s). Visible points: ${totalVisiblePoints}. Visible table rows: ${tableVisibleRows}.`
+          );
+        } else {
+          setDashboardFilterStatus(`Date filter applied to ${applicableCount} chart(s). Visible points: ${totalVisiblePoints}.`);
+        }
       }
     }
 
@@ -1660,46 +1906,18 @@
         return null;
       }
 
-      const columns = Object.keys(rows[0]);
-      if (columns.length === 0) {
+      const columns = Object.keys(rows[0] || {});
+      if (!Array.isArray(columns) || columns.length === 0) {
         return null;
       }
 
       const wrap = document.createElement("div");
       wrap.className = "table-wrap";
 
-      const table = document.createElement("table");
-      table.className = "result-table";
-
-      const thead = document.createElement("thead");
-      const headRow = document.createElement("tr");
-      const serialHeader = document.createElement("th");
-      serialHeader.textContent = "S.No";
-      headRow.appendChild(serialHeader);
-      for (const column of columns) {
-        const th = document.createElement("th");
-        th.textContent = column;
-        headRow.appendChild(th);
-      }
-      thead.appendChild(headRow);
-      table.appendChild(thead);
-
-      const tbody = document.createElement("tbody");
-      for (const [index, rowData] of rows.entries()) {
-        const tr = document.createElement("tr");
-        const serialCell = document.createElement("td");
-        serialCell.textContent = String(index + 1);
-        tr.appendChild(serialCell);
-        for (const column of columns) {
-          const td = document.createElement("td");
-          const cellValue = rowData[column];
-          td.textContent = cellValue === null || cellValue === undefined ? "" : String(cellValue);
-          tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-      }
-      table.appendChild(tbody);
-      wrap.appendChild(table);
+      // Preserve original rows for dashboard date-filter recalculation.
+      wrap.setAttribute("data-table-rows", JSON.stringify(rows));
+      wrap.setAttribute("data-original-table-rows", JSON.stringify(rows));
+      renderTableWrap(wrap, rows, columns);
       bubble.appendChild(wrap);
       return wrap;
     }

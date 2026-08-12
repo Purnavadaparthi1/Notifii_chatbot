@@ -7132,17 +7132,30 @@ def is_monthly_delivered_count_request(user_query):
     return has_package_context and has_delivered_context and (has_month_window or has_month_language) and has_count_or_chart
 
 
-def build_monthly_delivered_count_sql(account_id, user_query):
+def build_monthly_delivered_count_sql(
+    account_id,
+    user_query,
+    start_date=None,
+    end_date=None,
+    override_time_filters=False,
+):
     """Build deterministic month-vs-delivered-count SQL in account scope."""
     account_id_lit = sql_literal(account_id)
     conditions = [f"account_id = {account_id_lit}", "date_received IS NOT NULL"]
 
-    relative_condition = build_relative_time_window_condition(user_query, "date_received")
-    if relative_condition:
-        conditions.append(relative_condition)
+    explicit_date_condition = build_explicit_date_range_condition("date_received", start_date, end_date)
+    if override_time_filters and explicit_date_condition:
+        conditions.append(explicit_date_condition)
     else:
-        # Default to a practical trend window when month-wise aggregation is requested without explicit span.
-        conditions.append("date_received >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)")
+        if explicit_date_condition:
+            conditions.append(explicit_date_condition)
+
+        relative_condition = build_relative_time_window_condition(user_query, "date_received")
+        if relative_condition:
+            conditions.append(relative_condition)
+        else:
+            # Default to a practical trend window when month-wise aggregation is requested without explicit span.
+            conditions.append("date_received >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)")
 
     where_sql = " AND ".join(conditions)
     return (
@@ -7154,15 +7167,27 @@ def build_monthly_delivered_count_sql(account_id, user_query):
     )
 
 
-def build_yearly_package_count_sql(account_id, user_query):
+def build_yearly_package_count_sql(
+    account_id,
+    user_query,
+    start_date=None,
+    end_date=None,
+    override_time_filters=False,
+):
     """Build deterministic year-vs-package-count SQL for explicit year comparisons."""
     years = extract_requested_year_bucket_list(user_query)
     account_id_lit = sql_literal(account_id)
 
     conditions = [f"account_id = {account_id_lit}", "date_received IS NOT NULL"]
-    if years:
-        years_sql = ", ".join(str(year) for year in years)
-        conditions.append(f"YEAR(date_received) IN ({years_sql})")
+    explicit_date_condition = build_explicit_date_range_condition("date_received", start_date, end_date)
+    if override_time_filters and explicit_date_condition:
+        conditions.append(explicit_date_condition)
+    else:
+        if years:
+            years_sql = ", ".join(str(year) for year in years)
+            conditions.append(f"YEAR(date_received) IN ({years_sql})")
+        if explicit_date_condition:
+            conditions.append(explicit_date_condition)
 
     where_sql = " AND ".join(conditions)
     return (
@@ -9148,6 +9173,12 @@ def chatbot_ask():
             "table",
             chart_source_rows=monthly_chart_rows or monthly_rows,
         )
+        if isinstance(chart_payload, dict):
+            attach_dashboard_filter_context(
+                chart_payload,
+                "monthly_delivered_count",
+                user_query,
+            )
         answer = harmonize_answer_with_display_mode(
             user_query,
             answer,
@@ -9521,6 +9552,12 @@ def chatbot_ask():
             display_mode,
             chart_payload,
         )
+        if isinstance(chart_payload, dict):
+            attach_dashboard_filter_context(
+                chart_payload,
+                "yearly_package_count",
+                user_query,
+            )
         log_chat_interaction(
             account_id,
             user_query,
@@ -10539,6 +10576,22 @@ def chatbot_dashboard_filter():
             account_id,
             effective_query,
             row_limit=row_limit,
+            start_date=start_date,
+            end_date=end_date,
+            override_time_filters=True,
+        )
+    elif filter_kind in ("monthly_delivered_count",):
+        sql_text = build_monthly_delivered_count_sql(
+            account_id,
+            effective_query,
+            start_date=start_date,
+            end_date=end_date,
+            override_time_filters=True,
+        )
+    elif filter_kind in ("yearly_package_count",):
+        sql_text = build_yearly_package_count_sql(
+            account_id,
+            effective_query,
             start_date=start_date,
             end_date=end_date,
             override_time_filters=True,
