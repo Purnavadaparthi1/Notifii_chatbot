@@ -4374,6 +4374,189 @@ def is_ocr_success_breakdown_request(user_query):
     return success_or_match and rate_or_breakdown
 
 
+def is_ocr_triggered_breakdown_request(user_query):
+    """Return True when user asks OCR triggered vs not-triggered totals/percentages."""
+    text = normalize_intent_text(user_query)
+    if not text:
+        return False
+
+    if "ocr" not in text:
+        return False
+
+    has_triggered_term = any(
+        (
+            token in text
+            if " " in token
+            else re.search(rf"\b{re.escape(token)}\b", text) is not None
+        )
+        for token in (
+            "triggered",
+            "trigger",
+            "not triggered",
+            "untriggered",
+        )
+    )
+    if not has_triggered_term:
+        return False
+
+    has_metric_term = any(
+        (
+            token in text
+            if " " in token
+            else re.search(rf"\b{re.escape(token)}\b", text) is not None
+        )
+        for token in (
+            "percentage",
+            "percent",
+            "ratio",
+            "breakdown",
+            "count",
+            "total",
+            "totals",
+            "how many",
+        )
+    )
+    if not has_metric_term:
+        return False
+
+    # If user explicitly asks for row listing, do not route to percentage breakdown.
+    listing_terms = (
+        "list",
+        "records",
+        "record",
+        "details",
+        "data",
+        "rows",
+    )
+    if any(re.search(rf"\b{re.escape(token)}\b", text) is not None for token in listing_terms):
+        return False
+
+    return True
+
+
+def detect_ocr_triggered_records_scope(user_query):
+    """Detect whether OCR row listing asks for triggered, not_triggered, or all records."""
+    text = normalize_intent_text(user_query)
+    if not text or "ocr" not in text:
+        return "none"
+
+    listing_terms = (
+        "list",
+        "records",
+        "record",
+        "details",
+        "data",
+        "rows",
+        "show",
+        "give",
+        "fetch",
+        "provide",
+    )
+    asks_listing = any(
+        re.search(rf"\b{re.escape(token)}\b", text) is not None
+        for token in listing_terms
+    )
+    if not asks_listing:
+        return "none"
+
+    has_not_triggered = (
+        "not triggered" in text
+        or re.search(r"\buntriggered\b", text) is not None
+        or re.search(r"\bnot\s+trigger\w*\b", text) is not None
+    )
+    has_triggered = re.search(r"\btrigger\w*\b", text) is not None and not has_not_triggered
+
+    if has_not_triggered:
+        return "not_triggered"
+    if has_triggered:
+        return "triggered"
+    return "all"
+
+
+def build_ocr_triggered_records_sql(account_id, trigger_scope="all", row_limit=100):
+    """Build deterministic SQL for OCR triggered/not-triggered record listing."""
+    account_id_lit = sql_literal(account_id)
+    safe_limit = max(1, min(int(row_limit), 2000)) if row_limit is not None else 100
+    where_conditions = [f"account_id = {account_id_lit}"]
+
+    if trigger_scope == "triggered":
+        where_conditions.append("CAST(COALESCE(ocr_triggered, 0) AS UNSIGNED) = 1")
+    elif trigger_scope == "not_triggered":
+        where_conditions.append("CAST(COALESCE(ocr_triggered, 0) AS UNSIGNED) = 0")
+
+    where_sql = " AND ".join(where_conditions)
+    return (
+        "SELECT * "
+        "FROM track_packages "
+        f"WHERE {where_sql} "
+        "ORDER BY date_received DESC, package_id DESC "
+        f"LIMIT {safe_limit}"
+    )
+
+
+def build_ocr_triggered_breakdown_sql(account_id):
+    """Build deterministic SQL for OCR triggered vs not-triggered counts and percentages."""
+    account_id_lit = sql_literal(account_id)
+    return (
+        "SELECT "
+        "s.trigger_status, "
+        "s.trigger_label, "
+        "COALESCE(a.trigger_count, 0) AS trigger_count, "
+        "ROUND(COALESCE(a.trigger_count, 0) * 100.0 / NULLIF(t.total_count, 0), 2) AS trigger_percentage "
+        "FROM ("
+        "SELECT 1 AS trigger_status, 'triggered' AS trigger_label "
+        "UNION ALL SELECT 0, 'not_triggered'"
+        ") s "
+        "LEFT JOIN ("
+        "SELECT "
+        "CASE WHEN CAST(COALESCE(ocr_triggered, 0) AS UNSIGNED) = 1 THEN 1 ELSE 0 END AS trigger_status, "
+        "COUNT(*) AS trigger_count "
+        "FROM track_packages "
+        f"WHERE account_id = {account_id_lit} "
+        "GROUP BY trigger_status"
+        ") a ON a.trigger_status = s.trigger_status "
+        "CROSS JOIN ("
+        "SELECT COUNT(*) AS total_count "
+        "FROM track_packages "
+        f"WHERE account_id = {account_id_lit}"
+        ") t "
+        "ORDER BY s.trigger_status DESC"
+    )
+
+
+def build_ocr_triggered_breakdown_answer(rows):
+    """Build deterministic summary text for OCR triggered vs not-triggered metrics."""
+    if not isinstance(rows, list) or not rows:
+        return "No OCR-trigger data was found for this account."
+
+    triggered_count = 0
+    not_triggered_count = 0
+    triggered_pct = 0.0
+    not_triggered_pct = 0.0
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        label = str(row.get("trigger_label", "")).strip().lower()
+        count_value = _try_parse_float(row.get("trigger_count"))
+        pct_value = _try_parse_float(row.get("trigger_percentage"))
+
+        if label == "triggered":
+            triggered_count = int(count_value) if count_value is not None else 0
+            triggered_pct = float(pct_value) if pct_value is not None else 0.0
+        elif label == "not_triggered":
+            not_triggered_count = int(count_value) if count_value is not None else 0
+            not_triggered_pct = float(pct_value) if pct_value is not None else 0.0
+
+    total_count = triggered_count + not_triggered_count
+    return (
+        "OCR trigger summary for this account: "
+        f"Triggered = {triggered_count} ({triggered_pct:.2f}%), "
+        f"Not triggered = {not_triggered_count} ({not_triggered_pct:.2f}%), "
+        f"Total = {total_count}."
+    )
+
+
 def build_ocr_success_breakdown_sql(account_id):
     """Build deterministic SQL for OCR 1-1 success and failure scenario percentages."""
     account_id_lit = sql_literal(account_id)
@@ -5276,6 +5459,9 @@ def query_requests_table_view(user_query, requested_fields=None):
         re.search(pattern, text)
         for pattern in (
             r"\bshow(?:\s+me)?\b",
+            r"\bgive(?:\s+me)?\b",
+            r"\bprovide(?:\s+me)?\b",
+            r"\bfetch(?:\s+me)?\b",
             r"\bdetail(?:s)?\b",
             r"\bdata\b",
         )
@@ -7441,6 +7627,352 @@ def build_recipient_count_only_sql(account_id, user_query):
     )
 
 
+def detect_duplicate_name_request_field(user_query):
+    """Detect whether duplicate check should run for first_name, last_name, or both."""
+    text = normalize_intent_text(user_query)
+    if not text:
+        return "none"
+
+    has_duplicate_term = any(
+        term in text
+        for term in (
+            "duplicate",
+            "duplicates",
+            "duplicated",
+            "repeat",
+            "repeated",
+            "same name",
+            "same names",
+        )
+    )
+    if not has_duplicate_term:
+        return "none"
+
+    has_first_name_term = any(
+        term in text
+        for term in (
+            "first name",
+            "first names",
+            "firstname",
+            "preferred first name",
+            "preferred_first_name",
+        )
+    )
+    has_last_name_term = any(
+        term in text
+        for term in (
+            "last name",
+            "last names",
+            "lastname",
+            "surname",
+            "surnames",
+            "family name",
+            "family names",
+        )
+    )
+
+    # Keep this recipient-scoped so package/table generic routes do not override it.
+    has_recipient_context = any(
+        term in text
+        for term in (
+            "recipient",
+            "recipients",
+            "member",
+            "members",
+            "name",
+            "names",
+        )
+    )
+
+    if has_first_name_term and has_last_name_term:
+        return "both"
+    if has_last_name_term:
+        return "last_name"
+    if has_first_name_term:
+        return "first_name"
+    if has_recipient_context:
+        return "both"
+    return "none"
+
+
+def should_return_duplicate_name_all_columns(user_query):
+    """Return True when user asks duplicate-name results with full row details."""
+    text = normalize_intent_text(user_query)
+    if not text:
+        return False
+
+    full_detail_markers = (
+        "all columns",
+        "all fields",
+        "full details",
+        "all details",
+        "complete details",
+        "select *",
+    )
+    return any(marker in text for marker in full_detail_markers)
+
+
+def detect_duplicate_name_followup_contact_fields(user_query):
+    """Detect requested contact fields for duplicate-name follow-up requests."""
+    text = normalize_intent_text(user_query)
+    if not text:
+        return []
+
+    asks_email = any(
+        marker in text
+        for marker in (
+            "email",
+            "emails",
+            "mail id",
+            "mail ids",
+            "email id",
+            "email ids",
+            "e mail",
+        )
+    )
+    asks_phone = any(
+        marker in text
+        for marker in (
+            "cell",
+            "cellphone",
+            "cell phone",
+            "mobile",
+            "phone",
+            "contact number",
+            "contact numbers",
+        )
+    )
+
+    requested_fields = []
+    if asks_email:
+        requested_fields.append("email")
+    if asks_phone:
+        requested_fields.append("cellphone")
+    return requested_fields
+
+
+def is_duplicate_name_contextual_followup_request(user_query, duplicate_context):
+    """Return True for pronoun-based follow-up asks on prior duplicate-name result context."""
+    text = normalize_intent_text(user_query)
+    if not text or not isinstance(duplicate_context, dict):
+        return False
+
+    context_field = str(duplicate_context.get("name_field", "") or "").strip().lower()
+    if context_field not in ("first_name", "last_name", "both"):
+        return False
+
+    requested_fields = detect_duplicate_name_followup_contact_fields(user_query)
+    if not requested_fields:
+        return False
+
+    # If user asks a fresh explicit intent, do not hijack with duplicate-context follow-up.
+    explicit_new_intent_terms = (
+        "account billing",
+        "billing",
+        "credit card",
+        "package",
+        "packages",
+        "tracking",
+        "carrier",
+        "delivered",
+        "report",
+        "table",
+        "show me all",
+        "list all",
+        "core recipients",
+        "core_recipients",
+    )
+    if any(term in text for term in explicit_new_intent_terms):
+        return False
+
+    has_reference = any(
+        re.search(rf"\b{re.escape(token)}\b", text) is not None
+        for token in (
+            "their",
+            "them",
+            "those",
+            "these",
+            "same",
+        )
+    )
+    return has_reference
+
+
+def build_duplicate_name_followup_contact_sql(account_id, duplicate_name_field, contact_fields, row_limit=100):
+    """Build deterministic SQL for contact list of recipients matched by duplicate-name scope."""
+    account_id_lit = sql_literal(account_id)
+    safe_limit = max(1, min(int(row_limit), 200)) if row_limit is not None else 100
+    selected_contact_fields = [field for field in (contact_fields or []) if field in ("email", "cellphone")]
+    if not selected_contact_fields:
+        selected_contact_fields = ["email"]
+
+    first_name_expr = (
+        "COALESCE(NULLIF(TRIM(COALESCE(cr.preferred_first_name, cr.first_name)), ''), NULLIF(TRIM(cr.first_name), ''))"
+    )
+    last_name_expr = "NULLIF(TRIM(cr.last_name), '')"
+
+    duplicate_first_subquery = (
+        "SELECT "
+        "COALESCE(NULLIF(TRIM(COALESCE(preferred_first_name, first_name)), ''), NULLIF(TRIM(first_name), '')) "
+        "FROM core_recipients "
+        f"WHERE account_id = {account_id_lit} "
+        "GROUP BY COALESCE(NULLIF(TRIM(COALESCE(preferred_first_name, first_name)), ''), NULLIF(TRIM(first_name), '')) "
+        "HAVING COUNT(*) > 1"
+    )
+    duplicate_last_subquery = (
+        "SELECT NULLIF(TRIM(last_name), '') "
+        "FROM core_recipients "
+        f"WHERE account_id = {account_id_lit} "
+        "GROUP BY NULLIF(TRIM(last_name), '') "
+        "HAVING COUNT(*) > 1"
+    )
+
+    if duplicate_name_field == "last_name":
+        duplicate_condition = f"{last_name_expr} IN ({duplicate_last_subquery})"
+    elif duplicate_name_field == "both":
+        duplicate_condition = (
+            f"({first_name_expr} IN ({duplicate_first_subquery}) "
+            f"OR {last_name_expr} IN ({duplicate_last_subquery}))"
+        )
+    else:
+        duplicate_condition = f"{first_name_expr} IN ({duplicate_first_subquery})"
+
+    presence_conditions = []
+    for field_name in selected_contact_fields:
+        presence_conditions.append(f"NULLIF(TRIM(COALESCE(cr.{field_name}, '')), '') IS NOT NULL")
+    presence_sql = " OR ".join(presence_conditions)
+    select_contact_sql = ", ".join(f"cr.{field_name}" for field_name in selected_contact_fields)
+
+    return (
+        "SELECT cr.recipient_id, cr.account_id, "
+        "COALESCE(NULLIF(TRIM(COALESCE(cr.preferred_first_name, cr.first_name)), ''), NULLIF(TRIM(cr.first_name), '')) AS first_name, "
+        "NULLIF(TRIM(cr.last_name), '') AS last_name, "
+        f"{select_contact_sql} "
+        "FROM core_recipients cr "
+        f"WHERE cr.account_id = {account_id_lit} "
+        f"AND ({presence_sql}) "
+        f"AND {duplicate_condition} "
+        "ORDER BY first_name ASC, last_name ASC, cr.recipient_id DESC "
+        f"LIMIT {safe_limit}"
+    )
+
+
+def build_duplicate_name_sql(account_id, name_field, row_limit=100):
+    """Build deterministic SQL for duplicate recipient name detection."""
+    account_id_lit = sql_literal(account_id)
+    safe_limit = max(1, min(int(row_limit), 200)) if row_limit is not None else 100
+
+    first_name_expr = (
+        "COALESCE(NULLIF(TRIM(COALESCE(preferred_first_name, first_name)), ''), NULLIF(TRIM(first_name), ''))"
+    )
+    last_name_expr = "NULLIF(TRIM(last_name), '')"
+
+    if name_field == "last_name":
+        return (
+            "SELECT first_name, last_name, duplicate_count "
+            "FROM ("
+            "SELECT "
+            "'-' AS first_name, "
+            f"{last_name_expr} AS last_name, "
+            "COUNT(*) AS duplicate_count "
+            "FROM core_recipients "
+            f"WHERE account_id = {account_id_lit} "
+            f"GROUP BY {last_name_expr} "
+            "HAVING last_name IS NOT NULL AND last_name <> '' AND COUNT(*) > 1"
+            ") duplicates "
+            "ORDER BY duplicate_count DESC, last_name ASC, first_name ASC "
+            f"LIMIT {safe_limit}"
+        )
+
+    if name_field == "both":
+        return (
+            "SELECT first_name, last_name, duplicate_count "
+            "FROM ("
+            "SELECT "
+            f"{first_name_expr} AS first_name, "
+            "'-' AS last_name, "
+            "COUNT(*) AS duplicate_count "
+            "FROM core_recipients "
+            f"WHERE account_id = {account_id_lit} "
+            f"GROUP BY {first_name_expr} "
+            "HAVING first_name IS NOT NULL AND first_name <> '' AND COUNT(*) > 1 "
+            "UNION ALL "
+            "SELECT "
+            "'-' AS first_name, "
+            f"{last_name_expr} AS last_name, "
+            "COUNT(*) AS duplicate_count "
+            "FROM core_recipients "
+            f"WHERE account_id = {account_id_lit} "
+            f"GROUP BY {last_name_expr} "
+            "HAVING last_name IS NOT NULL AND last_name <> '' AND COUNT(*) > 1"
+            ") duplicates "
+            "ORDER BY duplicate_count DESC, first_name ASC, last_name ASC "
+            f"LIMIT {safe_limit}"
+        )
+
+    return (
+        "SELECT first_name, last_name, duplicate_count "
+        "FROM ("
+        "SELECT "
+        f"{first_name_expr} AS first_name, "
+        "'-' AS last_name, "
+        "COUNT(*) AS duplicate_count "
+        "FROM core_recipients "
+        f"WHERE account_id = {account_id_lit} "
+        f"GROUP BY {first_name_expr} "
+        "HAVING first_name IS NOT NULL AND first_name <> '' AND COUNT(*) > 1"
+        ") duplicates "
+        "ORDER BY duplicate_count DESC, first_name ASC, last_name ASC "
+        f"LIMIT {safe_limit}"
+    )
+
+
+def build_duplicate_name_details_sql(account_id, name_field, row_limit=100):
+    """Build deterministic SQL returning full recipient rows for duplicate-name matches."""
+    account_id_lit = sql_literal(account_id)
+    safe_limit = max(1, min(int(row_limit), 200)) if row_limit is not None else 100
+
+    first_name_expr = (
+        "COALESCE(NULLIF(TRIM(COALESCE(cr.preferred_first_name, cr.first_name)), ''), NULLIF(TRIM(cr.first_name), ''))"
+    )
+    last_name_expr = "NULLIF(TRIM(cr.last_name), '')"
+
+    duplicate_first_subquery = (
+        "SELECT "
+        "COALESCE(NULLIF(TRIM(COALESCE(preferred_first_name, first_name)), ''), NULLIF(TRIM(first_name), '')) "
+        "FROM core_recipients "
+        f"WHERE account_id = {account_id_lit} "
+        "GROUP BY COALESCE(NULLIF(TRIM(COALESCE(preferred_first_name, first_name)), ''), NULLIF(TRIM(first_name), '')) "
+        "HAVING COUNT(*) > 1"
+    )
+    duplicate_last_subquery = (
+        "SELECT NULLIF(TRIM(last_name), '') "
+        "FROM core_recipients "
+        f"WHERE account_id = {account_id_lit} "
+        "GROUP BY NULLIF(TRIM(last_name), '') "
+        "HAVING COUNT(*) > 1"
+    )
+
+    if name_field == "last_name":
+        duplicate_condition = f"{last_name_expr} IN ({duplicate_last_subquery})"
+    elif name_field == "both":
+        duplicate_condition = (
+            f"({first_name_expr} IN ({duplicate_first_subquery}) "
+            f"OR {last_name_expr} IN ({duplicate_last_subquery}))"
+        )
+    else:
+        duplicate_condition = f"{first_name_expr} IN ({duplicate_first_subquery})"
+
+    return (
+        "SELECT cr.* "
+        "FROM core_recipients cr "
+        f"WHERE cr.account_id = {account_id_lit} "
+        f"AND {duplicate_condition} "
+        "ORDER BY cr.recipient_id DESC "
+        f"LIMIT {safe_limit}"
+    )
+
+
 def _has_missing_contact_intent(text):
     """Return True when the query asks for recipients missing contact details."""
     if not text:
@@ -8780,6 +9312,164 @@ def chatbot_ask():
         mark_step("chatbot_ask_session_data_missing_return")
         return jsonify({"answer": answer, "rows": [], "status": "session_data_missing"})
 
+    ocr_record_scope = detect_ocr_triggered_records_scope(user_query)
+    if ocr_record_scope != "none":
+        requested_limit = extract_requested_row_limit(user_query, max_limit=2000)
+        ocr_records_limit = requested_limit if requested_limit is not None else 100
+        ocr_records_sql = build_ocr_triggered_records_sql(
+            account_id,
+            trigger_scope=ocr_record_scope,
+            row_limit=ocr_records_limit,
+        )
+        ocr_records_exec_started_at = time.perf_counter()
+        ocr_records_rows, ocr_records_status = execute_read_only_sql_for_chatbot(
+            ocr_records_sql,
+            max_rows=ocr_records_limit,
+        )
+        mark_step(
+            "chatbot_ask_ocr_triggered_records_sql_executed",
+            rows=len(ocr_records_rows),
+            sql_status=ocr_records_status,
+            scope=ocr_record_scope,
+            duration_s=f"{(time.perf_counter() - ocr_records_exec_started_at):.3f}",
+        )
+
+        if ocr_records_status != "ok":
+            answer = OUT_OF_DB_RESPONSE
+            log_chat_interaction(
+                account_id,
+                user_query,
+                ocr_records_sql,
+                f"ocr_triggered_records_sql_failed:{ocr_records_status}",
+                0,
+                answer,
+            )
+            mark_step("chatbot_ask_ocr_triggered_records_failed_return")
+            return jsonify({"answer": answer, "rows": [], "status": "sql_execution_failed"})
+
+        if not ocr_records_rows:
+            if ocr_record_scope == "not_triggered":
+                answer = "No OCR not-triggered records were found for this account."
+            elif ocr_record_scope == "triggered":
+                answer = "No OCR triggered records were found for this account."
+            else:
+                answer = "No OCR-related records were found for this account."
+            log_chat_interaction(
+                account_id,
+                user_query,
+                ocr_records_sql,
+                f"ocr_triggered_records_no_rows:{ocr_record_scope}",
+                0,
+                answer,
+            )
+            mark_step("chatbot_ask_ocr_triggered_records_no_rows_return", scope=ocr_record_scope)
+            return jsonify({"answer": answer, "rows": [], "status": "ok"})
+
+        table_rows = build_table_dataset(ocr_records_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+        session["last_result_rows"] = to_json_safe_rows(table_rows)
+        session["last_user_query"] = user_query
+
+        if ocr_record_scope == "not_triggered":
+            answer = f"Showing OCR not-triggered records for this account ({len(table_rows)} record(s))."
+        elif ocr_record_scope == "triggered":
+            answer = f"Showing OCR triggered records for this account ({len(table_rows)} record(s))."
+        else:
+            answer = f"Showing OCR records for this account ({len(table_rows)} record(s))."
+
+        display_mode, response_rows, chart_payload = resolve_visual_response(
+            user_query,
+            table_rows,
+            "table",
+            chart_source_rows=ocr_records_rows,
+        )
+        log_chat_interaction(
+            account_id,
+            user_query,
+            ocr_records_sql,
+            f"ok:ocr_triggered_records:{ocr_record_scope}",
+            len(ocr_records_rows),
+            answer,
+        )
+        mark_step("chatbot_ask_ocr_triggered_records_success_return", rows=len(ocr_records_rows), scope=ocr_record_scope)
+        update_chart_context(display_mode, chart_payload)
+        return jsonify(
+            {
+                "answer": answer,
+                "rows": response_rows,
+                "display": display_mode,
+                "chart": chart_payload,
+                "status": "ok",
+            }
+        )
+
+    if is_ocr_triggered_breakdown_request(user_query):
+        ocr_triggered_sql = build_ocr_triggered_breakdown_sql(account_id)
+        ocr_triggered_exec_started_at = time.perf_counter()
+        ocr_triggered_rows, ocr_triggered_status = execute_read_only_sql_for_chatbot(ocr_triggered_sql, max_rows=10)
+        mark_step(
+            "chatbot_ask_ocr_triggered_breakdown_sql_executed",
+            rows=len(ocr_triggered_rows),
+            sql_status=ocr_triggered_status,
+            duration_s=f"{(time.perf_counter() - ocr_triggered_exec_started_at):.3f}",
+        )
+
+        if ocr_triggered_status != "ok":
+            answer = OUT_OF_DB_RESPONSE
+            log_chat_interaction(
+                account_id,
+                user_query,
+                ocr_triggered_sql,
+                f"ocr_triggered_breakdown_sql_failed:{ocr_triggered_status}",
+                0,
+                answer,
+            )
+            mark_step("chatbot_ask_ocr_triggered_breakdown_failed_return")
+            return jsonify({"answer": answer, "rows": [], "status": "sql_execution_failed"})
+
+        if not ocr_triggered_rows:
+            answer = "No OCR-trigger data was found for this account."
+            log_chat_interaction(
+                account_id,
+                user_query,
+                ocr_triggered_sql,
+                "ocr_triggered_breakdown_no_rows",
+                0,
+                answer,
+            )
+            mark_step("chatbot_ask_ocr_triggered_breakdown_no_rows_return")
+            return jsonify({"answer": answer, "rows": [], "status": "ok"})
+
+        table_rows = build_table_dataset(ocr_triggered_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+        session["last_result_rows"] = to_json_safe_rows(table_rows)
+        session["last_user_query"] = user_query
+
+        answer = build_ocr_triggered_breakdown_answer(ocr_triggered_rows)
+        display_mode, response_rows, chart_payload = resolve_visual_response(
+            user_query,
+            table_rows,
+            "table",
+            chart_source_rows=ocr_triggered_rows,
+        )
+        log_chat_interaction(
+            account_id,
+            user_query,
+            ocr_triggered_sql,
+            "ok:ocr_triggered_breakdown",
+            len(ocr_triggered_rows),
+            answer,
+        )
+        mark_step("chatbot_ask_ocr_triggered_breakdown_success_return", rows=len(ocr_triggered_rows))
+        update_chart_context(display_mode, chart_payload)
+        return jsonify(
+            {
+                "answer": answer,
+                "rows": response_rows,
+                "display": display_mode,
+                "chart": chart_payload,
+                "status": "ok",
+            }
+        )
+
     if is_ocr_success_breakdown_request(user_query):
         ocr_sql = build_ocr_success_breakdown_sql(account_id)
         ocr_exec_started_at = time.perf_counter()
@@ -9020,6 +9710,198 @@ def chatbot_ask():
         )
 
     recipient_accuracy_mode = should_use_recipient_accuracy_path(user_query)
+
+    duplicate_name_field = detect_duplicate_name_request_field(user_query)
+    if duplicate_name_field != "none":
+        duplicate_limit = extract_requested_row_limit(user_query, max_limit=200) or 100
+        duplicate_all_columns_mode = should_return_duplicate_name_all_columns(user_query)
+        if duplicate_all_columns_mode:
+            duplicate_sql = build_duplicate_name_details_sql(account_id, duplicate_name_field, row_limit=duplicate_limit)
+        else:
+            duplicate_sql = build_duplicate_name_sql(account_id, duplicate_name_field, row_limit=duplicate_limit)
+        duplicate_exec_started_at = time.perf_counter()
+        duplicate_rows, duplicate_status = execute_read_only_sql_for_chatbot(duplicate_sql, max_rows=duplicate_limit)
+        mark_step(
+            "chatbot_ask_duplicate_name_sql_executed",
+            rows=len(duplicate_rows),
+            sql_status=duplicate_status,
+            name_field=duplicate_name_field,
+            all_columns=duplicate_all_columns_mode,
+            duration_s=f"{(time.perf_counter() - duplicate_exec_started_at):.3f}",
+        )
+
+        if duplicate_status != "ok":
+            answer = OUT_OF_DB_RESPONSE
+            log_chat_interaction(
+                account_id,
+                user_query,
+                duplicate_sql,
+                f"duplicate_name_sql_failed:{duplicate_status}",
+                0,
+                answer,
+            )
+            mark_step("chatbot_ask_duplicate_name_failed_return")
+            return jsonify({"answer": answer, "rows": [], "status": "sql_execution_failed"})
+
+        if not duplicate_rows:
+            if duplicate_name_field == "last_name":
+                answer = "No duplicate last names were found for this account."
+            elif duplicate_name_field == "both":
+                answer = "No duplicate first names or last names were found for this account."
+            else:
+                answer = "No duplicate first names were found for this account."
+            log_chat_interaction(
+                account_id,
+                user_query,
+                duplicate_sql,
+                f"duplicate_name_no_rows:{duplicate_name_field}",
+                0,
+                answer,
+            )
+            mark_step("chatbot_ask_duplicate_name_no_rows_return", name_field=duplicate_name_field)
+            return jsonify({"answer": answer, "rows": [], "status": "ok"})
+
+        table_rows = build_table_dataset(duplicate_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+        session["last_result_rows"] = to_json_safe_rows(table_rows)
+        session["last_user_query"] = user_query
+        session["last_duplicate_name_context"] = {
+            "name_field": duplicate_name_field,
+            "all_columns": bool(duplicate_all_columns_mode),
+            "source_query": user_query,
+        }
+
+        if duplicate_all_columns_mode:
+            if duplicate_name_field == "last_name":
+                answer = f"Showing full recipient rows for duplicate last names ({len(table_rows)} record(s))."
+            elif duplicate_name_field == "both":
+                answer = f"Showing full recipient rows where first name or last name is duplicated ({len(table_rows)} record(s))."
+            else:
+                answer = f"Showing full recipient rows for duplicate first names ({len(table_rows)} record(s))."
+        else:
+            if duplicate_name_field == "last_name":
+                answer = f"Found {len(table_rows)} duplicate last name value(s) for this account."
+            elif duplicate_name_field == "both":
+                answer = f"Found {len(table_rows)} duplicate name value(s) across first and last names for this account."
+            else:
+                answer = f"Found {len(table_rows)} duplicate first name value(s) for this account."
+        display_mode, response_rows, chart_payload = resolve_visual_response(
+            user_query,
+            table_rows,
+            "table",
+            chart_source_rows=duplicate_rows,
+        )
+        log_chat_interaction(
+            account_id,
+            user_query,
+            duplicate_sql,
+            f"ok:duplicate_name:{duplicate_name_field}:{'all_columns' if duplicate_all_columns_mode else 'summary'}",
+            len(duplicate_rows),
+            answer,
+        )
+        mark_step(
+            "chatbot_ask_duplicate_name_success_return",
+            rows=len(duplicate_rows),
+            name_field=duplicate_name_field,
+        )
+        update_chart_context(display_mode, chart_payload)
+        return jsonify(
+            {
+                "answer": answer,
+                "rows": response_rows,
+                "display": display_mode,
+                "chart": chart_payload,
+                "status": "ok",
+            }
+        )
+
+    duplicate_context = session.get("last_duplicate_name_context")
+    if is_duplicate_name_contextual_followup_request(user_query, duplicate_context):
+        followup_duplicate_field = str((duplicate_context or {}).get("name_field", "both") or "both").strip().lower()
+        followup_contact_fields = detect_duplicate_name_followup_contact_fields(user_query)
+        followup_limit = extract_requested_row_limit(user_query, max_limit=200) or 100
+        followup_sql = build_duplicate_name_followup_contact_sql(
+            account_id,
+            followup_duplicate_field,
+            followup_contact_fields,
+            row_limit=followup_limit,
+        )
+        followup_exec_started_at = time.perf_counter()
+        followup_rows, followup_status = execute_read_only_sql_for_chatbot(followup_sql, max_rows=followup_limit)
+        mark_step(
+            "chatbot_ask_duplicate_name_followup_contact_sql_executed",
+            rows=len(followup_rows),
+            sql_status=followup_status,
+            name_field=followup_duplicate_field,
+            contact_fields=",".join(followup_contact_fields or ["email"]),
+            duration_s=f"{(time.perf_counter() - followup_exec_started_at):.3f}",
+        )
+
+        if followup_status != "ok":
+            answer = OUT_OF_DB_RESPONSE
+            log_chat_interaction(
+                account_id,
+                user_query,
+                followup_sql,
+                f"duplicate_name_followup_contact_sql_failed:{followup_status}",
+                0,
+                answer,
+            )
+            mark_step("chatbot_ask_duplicate_name_followup_contact_failed_return")
+            return jsonify({"answer": answer, "rows": [], "status": "sql_execution_failed"})
+
+        if not followup_rows:
+            requested_contact_label = " and ".join(
+                "email" if field_name == "email" else "phone"
+                for field_name in (followup_contact_fields or ["email"])
+            )
+            answer = (
+                f"No {requested_contact_label} records were found for recipients matched by duplicate-name criteria in this account."
+            )
+            log_chat_interaction(
+                account_id,
+                user_query,
+                followup_sql,
+                "duplicate_name_followup_contact_no_rows",
+                0,
+                answer,
+            )
+            mark_step("chatbot_ask_duplicate_name_followup_contact_no_rows_return")
+            return jsonify({"answer": answer, "rows": [], "status": "ok"})
+
+        table_rows = build_table_dataset(followup_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+        session["last_result_rows"] = to_json_safe_rows(table_rows)
+        session["last_user_query"] = user_query
+
+        requested_contact_label = " and ".join(
+            "email" if field_name == "email" else "phone"
+            for field_name in (followup_contact_fields or ["email"])
+        )
+        answer = f"Showing {requested_contact_label} list for duplicate-name recipients ({len(table_rows)} record(s))."
+        display_mode, response_rows, chart_payload = resolve_visual_response(
+            user_query,
+            table_rows,
+            "table",
+            chart_source_rows=followup_rows,
+        )
+        log_chat_interaction(
+            account_id,
+            user_query,
+            followup_sql,
+            f"ok:duplicate_name_followup_contact:{followup_duplicate_field}",
+            len(followup_rows),
+            answer,
+        )
+        mark_step("chatbot_ask_duplicate_name_followup_contact_success_return", rows=len(followup_rows))
+        update_chart_context(display_mode, chart_payload)
+        return jsonify(
+            {
+                "answer": answer,
+                "rows": response_rows,
+                "display": display_mode,
+                "chart": chart_payload,
+                "status": "ok",
+            }
+        )
 
     if recipient_accuracy_mode and is_top_recipient_request(user_query):
         requested_fields = infer_requested_fields_from_query(user_query)

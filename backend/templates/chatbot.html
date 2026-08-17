@@ -98,7 +98,7 @@
       padding-right: 6px;
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      grid-auto-rows: var(--dashboard-tile-height);
+      grid-auto-rows: minmax(var(--dashboard-tile-height), auto);
       gap: 10px;
       min-height: 0;
       flex: 0 0 auto;
@@ -207,6 +207,7 @@
     }
 
     .dashboard-card {
+      --card-height: var(--dashboard-tile-height);
       border: 1px solid #c6d5dc;
       border-radius: 10px;
       background: #fff;
@@ -215,8 +216,8 @@
       flex: 0 0 auto;
       width: 100%;
       min-width: 0;
-      min-height: var(--dashboard-tile-height);
-      height: var(--dashboard-tile-height);
+      min-height: var(--card-height);
+      height: var(--card-height);
       display: grid;
       grid-template-rows: auto 1fr;
     }
@@ -251,6 +252,65 @@
       background: transparent;
     }
 
+    .dashboard-card-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+
+    .dashboard-card-size {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border: 1px solid #d2e0e6;
+      border-radius: 8px;
+      padding: 2px 4px;
+      background: #fff;
+    }
+
+    .dashboard-size-value {
+      min-width: 44px;
+      text-align: center;
+      font-size: 0.72rem;
+      color: #375564;
+      font-weight: 700;
+    }
+
+    .dashboard-size-btn {
+      border: 1px solid #cad8de;
+      border-radius: 6px;
+      background: #fff;
+      color: #254351;
+      padding: 2px 7px;
+      min-width: 28px;
+      height: 26px;
+      font-size: 0.82rem;
+      font-weight: 800;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .dashboard-size-btn:hover {
+      background: #eef5f8;
+    }
+
+    .dashboard-size-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .dashboard-size-reset {
+      border-color: #cedce3;
+      padding-left: 8px;
+      padding-right: 8px;
+      min-width: auto;
+      color: #3f5e6b;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
     .dashboard-card-body {
       padding: 10px;
       overflow-x: auto;
@@ -271,11 +331,11 @@
       min-width: 0;
       width: 100%;
       overflow: auto;
-      min-height: calc(var(--dashboard-tile-height) - 92px);
+      min-height: calc(var(--card-height) - 92px);
     }
 
     .dashboard-card .chart-viewport {
-      height: calc(var(--dashboard-tile-height) - 116px);
+      height: calc(var(--card-height) - 116px);
       min-width: 0;
       min-height: 210px;
       overflow: auto;
@@ -686,7 +746,7 @@
       }
       .dashboard-card {
         min-height: 260px;
-        height: auto;
+        height: var(--card-height);
       }
       .dashboard-card .chart-wrap,
       .dashboard-card .chart-viewport {
@@ -702,6 +762,12 @@
       .add-dashboard-btn,
       .dashboard-remove {
         width: auto;
+      }
+      .dashboard-card-size {
+        gap: 3px;
+      }
+      .dashboard-size-value {
+        min-width: 40px;
       }
     }
 
@@ -796,6 +862,9 @@
     const dashboardFilterStatus = document.getElementById("dashboardFilterStatus");
     const dashboardItemSignatures = new Set();
     const dashboardPinnedSources = new Set();
+    const DASHBOARD_CARD_SCALE_MIN = 1;
+    const DASHBOARD_CARD_SCALE_MAX = 2.4;
+    const DASHBOARD_CARD_SCALE_STEP = 0.2;
 
     function setTypingIndicator(isVisible) {
       typingIndicator.classList.toggle("visible", isVisible);
@@ -1690,6 +1759,128 @@
       });
     }
 
+    function clampCardScale(value) {
+      if (!Number.isFinite(value)) {
+        return DASHBOARD_CARD_SCALE_MIN;
+      }
+      return Math.max(DASHBOARD_CARD_SCALE_MIN, Math.min(DASHBOARD_CARD_SCALE_MAX, value));
+    }
+
+    function formatCardScaleLabel(scale) {
+      return `${Math.round(scale * 100)}%`;
+    }
+
+    function getDashboardGridColumnCount() {
+      const template = window.getComputedStyle(dashboardItems).gridTemplateColumns || "";
+      const normalized = template.trim();
+      if (!normalized || normalized === "none") {
+        return 1;
+      }
+      return normalized.split(/\s+/).length;
+    }
+
+    function applyDashboardCardGridSpan(card, scale) {
+      if (!card) {
+        return;
+      }
+
+      const columns = getDashboardGridColumnCount();
+      if (columns >= 2 && scale >= 1.6) {
+        card.style.gridColumn = "span 2";
+      } else {
+        card.style.gridColumn = "span 1";
+      }
+    }
+
+    function applyDashboardCardScale(card, scale, controls = null) {
+      if (!card) {
+        return;
+      }
+
+      const normalizedScale = clampCardScale(scale);
+      card.dataset.scale = String(normalizedScale);
+      card.style.setProperty("--card-height", `calc(var(--dashboard-tile-height) * ${normalizedScale})`);
+      applyDashboardCardGridSpan(card, normalizedScale);
+
+      if (controls) {
+        const sizeLabel = controls.querySelector(".dashboard-size-value");
+        const decreaseButton = controls.querySelector('[data-size-action="decrease"]');
+        const increaseButton = controls.querySelector('[data-size-action="increase"]');
+        const resetButton = controls.querySelector('[data-size-action="reset"]');
+
+        if (sizeLabel) {
+          sizeLabel.textContent = formatCardScaleLabel(normalizedScale);
+        }
+        if (decreaseButton) {
+          decreaseButton.disabled = normalizedScale <= DASHBOARD_CARD_SCALE_MIN + 0.001;
+        }
+        if (increaseButton) {
+          increaseButton.disabled = normalizedScale >= DASHBOARD_CARD_SCALE_MAX - 0.001;
+        }
+        if (resetButton) {
+          resetButton.disabled = Math.abs(normalizedScale - DASHBOARD_CARD_SCALE_MIN) < 0.001;
+        }
+      }
+    }
+
+    function buildDashboardCardSizeControls(card) {
+      const controls = document.createElement("div");
+      controls.className = "dashboard-card-size";
+
+      const decreaseButton = document.createElement("button");
+      decreaseButton.type = "button";
+      decreaseButton.className = "dashboard-size-btn";
+      decreaseButton.dataset.sizeAction = "decrease";
+      decreaseButton.textContent = "-";
+      decreaseButton.setAttribute("aria-label", "Decrease card size");
+
+      const sizeValue = document.createElement("span");
+      sizeValue.className = "dashboard-size-value";
+      sizeValue.textContent = "100%";
+
+      const increaseButton = document.createElement("button");
+      increaseButton.type = "button";
+      increaseButton.className = "dashboard-size-btn";
+      increaseButton.dataset.sizeAction = "increase";
+      increaseButton.textContent = "+";
+      increaseButton.setAttribute("aria-label", "Increase card size");
+
+      const resetButton = document.createElement("button");
+      resetButton.type = "button";
+      resetButton.className = "dashboard-size-btn dashboard-size-reset";
+      resetButton.dataset.sizeAction = "reset";
+      resetButton.textContent = "Original";
+      resetButton.setAttribute("aria-label", "Reset card size to original");
+
+      const updateScale = (delta = null, useReset = false) => {
+        const currentScale = Number(card.dataset.scale || DASHBOARD_CARD_SCALE_MIN);
+        const nextScale = useReset
+          ? DASHBOARD_CARD_SCALE_MIN
+          : clampCardScale(currentScale + (delta || 0));
+        applyDashboardCardScale(card, nextScale, controls);
+      };
+
+      decreaseButton.addEventListener("click", () => {
+        updateScale(-DASHBOARD_CARD_SCALE_STEP, false);
+      });
+
+      increaseButton.addEventListener("click", () => {
+        updateScale(DASHBOARD_CARD_SCALE_STEP, false);
+      });
+
+      resetButton.addEventListener("click", () => {
+        updateScale(0, true);
+      });
+
+      controls.appendChild(decreaseButton);
+      controls.appendChild(sizeValue);
+      controls.appendChild(increaseButton);
+      controls.appendChild(resetButton);
+
+      applyDashboardCardScale(card, DASHBOARD_CARD_SCALE_MIN, controls);
+      return controls;
+    }
+
     function addDashboardCard(label, contentHtml, sourceId = "") {
       if (!contentHtml) {
         return false;
@@ -1732,13 +1923,20 @@
         card.remove();
       });
 
-      head.appendChild(title);
-      head.appendChild(removeButton);
-
       const body = document.createElement("div");
       body.className = "dashboard-card-body";
       body.innerHTML = contentHtml;
       hydrateDashboardCharts(body);
+
+      head.appendChild(title);
+
+      const actions = document.createElement("div");
+      actions.className = "dashboard-card-actions";
+      if (body.querySelector(".chart-wrap") || body.querySelector(".table-wrap")) {
+        actions.appendChild(buildDashboardCardSizeControls(card));
+      }
+      actions.appendChild(removeButton);
+      head.appendChild(actions);
 
       card.appendChild(head);
       card.appendChild(body);
