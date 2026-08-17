@@ -3049,6 +3049,12 @@ def build_table_disambiguation_response(candidate_tables):
     if not cleaned:
         return INTENT_CLARIFICATION_RESPONSE
 
+    if len(cleaned) == 1:
+        return (
+            "I found one likely table for your prompt: "
+            f"{cleaned[0]}. Please confirm or refine your request so I can fetch accurate data."
+        )
+
     preview = ", ".join(cleaned[:6])
     if len(cleaned) > 6:
         preview += ", ..."
@@ -3203,6 +3209,15 @@ def select_prompt_tables_for_query(user_query, schema_map, max_tables=3):
     if explicit_tables:
         return tuple(explicit_tables), "explicit_table_name", True
 
+    if _is_notification_request(user_query):
+        ranked_notification_tables = _rank_notification_tables(
+            user_query,
+            runtime_supported_tables,
+            max_tables=max_tables,
+        )
+        if ranked_notification_tables:
+            return (ranked_notification_tables[0],), "notification_intent", True
+
     exact_runtime_matches = _find_exact_table_name_matches(user_query, runtime_supported_tables)
     if len(exact_runtime_matches) == 1:
         return (exact_runtime_matches[0],), "dynamic_exact_name", True
@@ -3352,6 +3367,15 @@ def detect_direct_target_table(user_query, schema_map, prompt_tables=None, promp
     if explicit_tables:
         return explicit_tables[0], "explicit_table_name"
 
+    if _is_notification_request(user_query):
+        notification_candidates = _rank_notification_tables(user_query, runtime_tables, max_tables=6)
+        for table_name in notification_candidates:
+            if table_name in runtime_tables:
+                return table_name, "notification_keyword_hint"
+
+        # Prevent unrelated fallback when notification intent is explicit.
+        return "", "notification_intent_no_table_match"
+
     exact_runtime_matches = _find_exact_table_name_matches(user_query, sorted(runtime_tables))
     if len(exact_runtime_matches) == 1:
         return exact_runtime_matches[0], "dynamic_exact_name"
@@ -3382,6 +3406,7 @@ def detect_direct_target_table(user_query, schema_map, prompt_tables=None, promp
 
         # Prevent unrelated fallback when connect message intent is explicit.
         return "", "connect_intent_no_table_match"
+
     keyword_hints = (
         (
             "core_account_billing",
@@ -4187,6 +4212,23 @@ def _is_connect_message_request(user_query):
     return has_connect and has_message_context
 
 
+def _is_notification_request(user_query):
+    """Return True when query explicitly asks for notification-style data."""
+    text = normalize_intent_text(user_query)
+    if not text:
+        return False
+
+    notification_terms = (
+        "notification",
+        "notifications",
+        "notify",
+        "notified",
+        "alert",
+        "alerts",
+    )
+    return any(term in text for term in notification_terms)
+
+
 def _is_settings_request(user_query):
     """Return True when query is asking for settings-related data."""
     text = normalize_intent_text(user_query)
@@ -4315,6 +4357,64 @@ def _rank_connect_message_tables(user_query, runtime_tables, max_tables=3):
         # Prevent queue table from winning generic "connect messages" prompts.
         if "mailqueue" in table_name and not has_queue_hint and has_message_hint:
             score -= 18.0
+
+        scored.append((table_name, score))
+
+    if not scored:
+        return []
+
+    scored.sort(key=lambda item: item[1], reverse=True)
+    limit = max(1, int(max_tables or 3))
+    return [table_name for table_name, _ in scored[:limit]]
+
+
+def _rank_notification_tables(user_query, runtime_tables, max_tables=3):
+    """Rank notification tables for notification-focused prompts."""
+    text = normalize_intent_text(user_query)
+    if not text:
+        return []
+
+    runtime_set = {str(name or "").strip().lower() for name in (runtime_tables or [])}
+    if not runtime_set:
+        return []
+
+    notification_candidates = [
+        "track_notification_messages",
+        "track_notifications",
+        "core_recipient_notifications",
+        "checkout_notification_messages",
+        "checkout_notifications",
+        "locker_pubnub_notifications",
+        "track_notifications_archived_2018nov30",
+    ]
+
+    has_message_hint = _contains_any_term(text, ("message", "messages"))
+    has_recent_hint = _contains_any_term(text, ("recent", "latest", "last", "new"))
+    has_track_hint = _contains_any_term(text, ("package", "packages", "delivery", "delivered", "track", "tracking"))
+    has_checkout_hint = _contains_any_term(text, ("checkout", "reservation", "facility"))
+    has_recipient_hint = _contains_any_term(text, ("recipient", "recipients", "member", "members"))
+    has_locker_hint = _contains_any_term(text, ("locker", "lockers", "tower"))
+
+    scored = []
+    for table_name in notification_candidates:
+        if table_name not in runtime_set:
+            continue
+
+        score = 5.0
+        if "notification" in table_name:
+            score += 20.0
+        if has_message_hint and "message" in table_name:
+            score += 12.0
+        if has_track_hint and table_name.startswith("track_"):
+            score += 10.0
+        if has_checkout_hint and table_name.startswith("checkout_"):
+            score += 10.0
+        if has_recipient_hint and table_name.startswith("core_recipient_"):
+            score += 10.0
+        if has_locker_hint and table_name.startswith("locker_"):
+            score += 10.0
+        if has_recent_hint and "archived" in table_name:
+            score -= 15.0
 
         scored.append((table_name, score))
 
