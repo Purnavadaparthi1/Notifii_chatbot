@@ -8500,21 +8500,32 @@ def login_page():
                         mark_step("login_session_account_set", account_id=account_id)
 
                         fetch_started_at = time.perf_counter()
-                        db_rows = fetch_track_packages_data(account_id)
+                        db_rows, track_fetch_status = fetch_track_packages_data(
+                            account_id,
+                            include_status=True,
+                        )
                         mark_step(
                             "login_track_packages_fetched",
                             rows=len(db_rows),
+                            status=track_fetch_status,
                             duration_s=f"{(time.perf_counter() - fetch_started_at):.3f}",
                         )
 
                         session["account_data"] = db_rows
+                        session["account_data_fetch_status"] = track_fetch_status
                         session["account_data_version"] = str(time.time_ns())
-                        mark_step("login_session_data_set", rows=len(db_rows))
+                        mark_step("login_session_data_set", rows=len(db_rows), status=track_fetch_status)
                         logger.info(
-                            "track_packages(account_id=%s) fetch completed rows=%s",
+                            "track_packages(account_id=%s) fetch completed rows=%s status=%s",
                             account_id,
                             len(db_rows),
+                            track_fetch_status,
                         )
+                        if track_fetch_status != "ok":
+                            logger.warning(
+                                "Proceeding to chatbot with empty/stale account_data due to fetch status=%s",
+                                track_fetch_status,
+                            )
                         for index, row in enumerate(db_rows, start=1):
                             logger.info(
                                 "track_packages row %s (login account_id=%s): %s",
@@ -8550,16 +8561,23 @@ def chatbot_page():
         mark_step("chatbot_page_missing_account_id_redirect")
         return redirect(url_for("login_page"))
 
-    account_data = session.get("account_data", [])
-    if not account_data:
-        mark_step("chatbot_page_missing_account_data_redirect")
-        return redirect(url_for("login_page"))
+    account_data = session.get("account_data")
+    if not isinstance(account_data, list):
+        account_data = []
+        session["account_data"] = account_data
 
-    mark_step("chatbot_page_render", account_data_count=len(account_data))
+    account_data_fetch_status = str(session.get("account_data_fetch_status", "unknown") or "unknown")
+
+    mark_step(
+        "chatbot_page_render",
+        account_data_count=len(account_data),
+        account_data_fetch_status=account_data_fetch_status,
+    )
     return render_template(
         "chatbot.html",
         account_id=account_id,
         account_data_count=len(account_data),
+        account_data_fetch_status=account_data_fetch_status,
     )
 
 
@@ -9300,17 +9318,33 @@ def chatbot_ask():
     session_rows = session.get("account_data", [])
     mark_step("chatbot_ask_session_data_loaded", rows=len(session_rows) if isinstance(session_rows, list) else 0)
     if not isinstance(session_rows, list) or not session_rows:
-        answer = OUT_OF_DB_RESPONSE
-        log_chat_interaction(
-            account_id,
-            user_query,
-            "SESSION_DATA_ONLY",
-            "session_data_missing",
-            0,
-            answer,
+        refetch_started_at = time.perf_counter()
+        refreshed_rows, refreshed_status = fetch_track_packages_data(account_id, include_status=True)
+        mark_step(
+            "chatbot_ask_session_data_refetched",
+            rows=len(refreshed_rows),
+            status=refreshed_status,
+            duration_s=f"{(time.perf_counter() - refetch_started_at):.3f}",
         )
-        mark_step("chatbot_ask_session_data_missing_return")
-        return jsonify({"answer": answer, "rows": [], "status": "session_data_missing"})
+
+        if isinstance(refreshed_rows, list) and refreshed_rows:
+            session_rows = refreshed_rows
+            session["account_data"] = refreshed_rows
+            session["account_data_fetch_status"] = refreshed_status
+            session["account_data_version"] = str(time.time_ns())
+            mark_step("chatbot_ask_session_data_refetch_success", rows=len(refreshed_rows))
+        else:
+            answer = OUT_OF_DB_RESPONSE
+            log_chat_interaction(
+                account_id,
+                user_query,
+                "SESSION_DATA_ONLY",
+                f"session_data_missing_refetch_status:{refreshed_status}",
+                0,
+                answer,
+            )
+            mark_step("chatbot_ask_session_data_missing_return", status=refreshed_status)
+            return jsonify({"answer": answer, "rows": [], "status": "session_data_missing"})
 
     ocr_record_scope = detect_ocr_triggered_records_scope(user_query)
     if ocr_record_scope != "none":

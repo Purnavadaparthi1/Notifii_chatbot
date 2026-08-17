@@ -36,7 +36,12 @@ if not DATABASE_URL:
     logger.info("Using DB_* environment settings for SQLAlchemy engine.")
 
 logger.info("Using SQLAlchemy MySQL engine.")
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+DB_CONNECT_TIMEOUT_SECONDS = max(1, int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "5")))
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    connect_args={"connect_timeout": DB_CONNECT_TIMEOUT_SECONDS},
+)
 CURRENT_ACCOUNT_ID = None
 SCHEMA_CACHE_TTL_SECONDS = max(5, int(os.getenv("SCHEMA_CACHE_TTL_SECONDS", "300")))
 _SCHEMA_CACHE = {
@@ -66,11 +71,13 @@ def set_current_account_id(account_id):
     logger.info("Global account_id updated to %s", CURRENT_ACCOUNT_ID)
 
 
-def fetch_track_packages_data(account_id, max_rows=500):
+def fetch_track_packages_data(account_id, max_rows=500, include_status=False):
     """Fetch account-scoped data only from track_packages table."""
     resolved_account_id = str(account_id).strip() if account_id is not None else ""
     if not resolved_account_id:
         logger.warning("No account_id provided for track_packages query.")
+        if include_status:
+            return [], "missing_account_id"
         return []
 
     safe_limit = max(1, min(int(max_rows), 2000))
@@ -87,6 +94,8 @@ def fetch_track_packages_data(account_id, max_rows=500):
                 len(filtered_dataset),
                 resolved_account_id,
             )
+            if include_status:
+                return filtered_dataset, "ok"
             return filtered_dataset
     except SQLAlchemyError as error:
         logger.error(
@@ -94,6 +103,8 @@ def fetch_track_packages_data(account_id, max_rows=500):
             resolved_account_id,
             error,
         )
+        if include_status:
+            return [], f"sql_error:{error.__class__.__name__}"
         return []
 
 
