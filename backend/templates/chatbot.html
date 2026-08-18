@@ -222,6 +222,19 @@
       grid-template-rows: auto 1fr;
     }
 
+    .dashboard-card.is-resizable-card {
+      transition: border-color .12s ease;
+    }
+
+    .dashboard-card.is-resizable-card:hover {
+      border-color: #96b2bf;
+    }
+
+    .dashboard-card.is-resizing-card {
+      border-color: #5f8fa3;
+      user-select: none;
+    }
+
     .dashboard-card-head {
       padding: 8px 10px;
       font-size: 0.8rem;
@@ -864,7 +877,9 @@
     const dashboardPinnedSources = new Set();
     const DASHBOARD_CARD_SCALE_MIN = 1;
     const DASHBOARD_CARD_SCALE_MAX = 2.4;
-    const DASHBOARD_CARD_SCALE_STEP = 0.2;
+    const DASHBOARD_CARD_SCALE_STEP = 0.01;
+    const DASHBOARD_CARD_BORDER_RESIZE_EDGE_PX = 10;
+    const DASHBOARD_CARD_WIDTH_MIN_PX = 280;
 
     function setTypingIndicator(isVisible) {
       typingIndicator.classList.toggle("visible", isVisible);
@@ -1767,7 +1782,7 @@
     }
 
     function formatCardScaleLabel(scale) {
-      return `${Math.round(scale * 100)}%`;
+      return `${(scale * 100).toFixed(1)}%`;
     }
 
     function getDashboardGridColumnCount() {
@@ -1784,12 +1799,9 @@
         return;
       }
 
-      const columns = getDashboardGridColumnCount();
-      if (columns >= 2 && scale >= 1.6) {
-        card.style.gridColumn = "span 2";
-      } else {
-        card.style.gridColumn = "span 1";
-      }
+      // Keep single-column span so card size changes remain smooth and free-hand
+      // without abrupt grid snapping at threshold values.
+      card.style.gridColumn = "span 1";
     }
 
     function applyDashboardCardScale(card, scale, controls = null) {
@@ -1857,6 +1869,10 @@
         const nextScale = useReset
           ? DASHBOARD_CARD_SCALE_MIN
           : clampCardScale(currentScale + (delta || 0));
+        if (useReset) {
+          card.style.width = "";
+          card.style.justifySelf = "";
+        }
         applyDashboardCardScale(card, nextScale, controls);
       };
 
@@ -1879,6 +1895,175 @@
 
       applyDashboardCardScale(card, DASHBOARD_CARD_SCALE_MIN, controls);
       return controls;
+    }
+
+    function getCardBorderResizeDirection(event, card) {
+      if (!card) {
+        return "";
+      }
+
+      const rect = card.getBoundingClientRect();
+      const edge = DASHBOARD_CARD_BORDER_RESIZE_EDGE_PX;
+      const left = event.clientX - rect.left <= edge;
+      const right = rect.right - event.clientX <= edge;
+      const top = event.clientY - rect.top <= edge;
+      const bottom = rect.bottom - event.clientY <= edge;
+
+      if (top && left) {
+        return "nw";
+      }
+      if (top && right) {
+        return "ne";
+      }
+      if (bottom && left) {
+        return "sw";
+      }
+      if (bottom && right) {
+        return "se";
+      }
+      if (top) {
+        return "n";
+      }
+      if (bottom) {
+        return "s";
+      }
+      if (left) {
+        return "w";
+      }
+      if (right) {
+        return "e";
+      }
+      return "";
+    }
+
+    function getCursorForResizeDirection(direction) {
+      const map = {
+        n: "ns-resize",
+        s: "ns-resize",
+        e: "ew-resize",
+        w: "ew-resize",
+        ne: "nesw-resize",
+        sw: "nesw-resize",
+        nw: "nwse-resize",
+        se: "nwse-resize",
+      };
+      return map[direction] || "default";
+    }
+
+    function clampDashboardCardWidth(card, width) {
+      if (!card || !Number.isFinite(width)) {
+        return DASHBOARD_CARD_WIDTH_MIN_PX;
+      }
+
+      const gridContainer = card.parentElement;
+      const maxByContainer = gridContainer ? Math.max(DASHBOARD_CARD_WIDTH_MIN_PX, gridContainer.clientWidth - 6) : 1200;
+      return Math.max(DASHBOARD_CARD_WIDTH_MIN_PX, Math.min(maxByContainer, Math.round(width)));
+    }
+
+    function setupDashboardCardBorderResize(card) {
+      if (!card || card.dataset.borderResizeReady === "1") {
+        return;
+      }
+
+      card.dataset.borderResizeReady = "1";
+      card.classList.add("is-resizable-card");
+      card.title = "Drag any card border to resize";
+
+      let resizeState = null;
+      let hoveringDirection = "";
+
+      const onMouseMove = (event) => {
+        if (resizeState) {
+          const dx = event.clientX - resizeState.startX;
+          const dy = event.clientY - resizeState.startY;
+          let nextWidth = resizeState.startWidth;
+          let nextHeight = resizeState.startHeight;
+
+          if (resizeState.direction.includes("e")) {
+            nextWidth = resizeState.startWidth + dx;
+          }
+          if (resizeState.direction.includes("w")) {
+            nextWidth = resizeState.startWidth - dx;
+          }
+          if (resizeState.direction.includes("s")) {
+            nextHeight = resizeState.startHeight + dy;
+          }
+          if (resizeState.direction.includes("n")) {
+            nextHeight = resizeState.startHeight - dy;
+          }
+
+          if (resizeState.direction.includes("n") || resizeState.direction.includes("s")) {
+            const nextScale = nextHeight / resizeState.baseHeight;
+            const controls = card.querySelector(".dashboard-card-size");
+            applyDashboardCardScale(card, nextScale, controls);
+          }
+
+          if (resizeState.direction.includes("e") || resizeState.direction.includes("w")) {
+            const clampedWidth = clampDashboardCardWidth(card, nextWidth);
+            card.style.width = `${clampedWidth}px`;
+            card.style.justifySelf = "start";
+          }
+
+          event.preventDefault();
+          return;
+        }
+
+        const direction = getCardBorderResizeDirection(event, card);
+        hoveringDirection = direction;
+        card.style.cursor = getCursorForResizeDirection(direction);
+      };
+
+      const onMouseUp = () => {
+        if (!resizeState) {
+          return;
+        }
+
+        resizeState = null;
+        card.classList.remove("is-resizing-card");
+        document.body.style.userSelect = "";
+        card.style.cursor = getCursorForResizeDirection(hoveringDirection);
+        window.removeEventListener("mousemove", onMouseMove);
+        window.removeEventListener("mouseup", onMouseUp);
+      };
+
+      card.addEventListener("mousemove", onMouseMove);
+
+      card.addEventListener("mouseleave", () => {
+        if (!resizeState) {
+          hoveringDirection = "";
+          card.style.cursor = "default";
+        }
+      });
+
+      card.addEventListener("mousedown", (event) => {
+        if (event.button !== 0) {
+          return;
+        }
+
+        const direction = getCardBorderResizeDirection(event, card);
+        if (!direction) {
+          return;
+        }
+
+        const rect = card.getBoundingClientRect();
+        const currentScale = Number(card.dataset.scale || DASHBOARD_CARD_SCALE_MIN);
+        const baseHeight = rect.height / (currentScale > 0 ? currentScale : DASHBOARD_CARD_SCALE_MIN);
+        resizeState = {
+          direction,
+          startX: event.clientX,
+          startY: event.clientY,
+          startWidth: rect.width,
+          startHeight: rect.height,
+          baseHeight,
+        };
+
+        card.classList.add("is-resizing-card");
+        document.body.style.userSelect = "none";
+        card.style.cursor = getCursorForResizeDirection(direction);
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+        event.preventDefault();
+      });
     }
 
     function addDashboardCard(label, contentHtml, sourceId = "") {
@@ -1940,6 +2125,9 @@
 
       card.appendChild(head);
       card.appendChild(body);
+      if (body.querySelector(".chart-wrap")) {
+        setupDashboardCardBorderResize(card);
+      }
       dashboardItems.appendChild(card);
       dashboardItemSignatures.add(signature);
       if (normalizedSourceId) {

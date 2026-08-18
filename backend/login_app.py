@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import TimedRotatingFileHandler
 import os
 import re
 import json
@@ -50,12 +51,26 @@ app.config["SESSION_PERMANENT"] = False
 Session(app)
 
 LOG_PATH = Path(__file__).resolve().parent / "login_page.log"
+LOGIN_LOG_RETENTION_DAYS = max(1, int(os.getenv("LOGIN_LOG_RETENTION_DAYS", "7")))
+
+
+def _build_login_log_file_handler():
+    """Create rotating login log handler with day-based retention."""
+    return TimedRotatingFileHandler(
+        LOG_PATH,
+        when="midnight",
+        interval=1,
+        backupCount=LOGIN_LOG_RETENTION_DAYS,
+        encoding="utf-8",
+    )
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(LOG_PATH, encoding="utf-8"),
+        _build_login_log_file_handler(),
     ],
 )
 logger = logging.getLogger("login_page")
@@ -76,7 +91,7 @@ def _ensure_login_logger_file_handler():
             if handler_path == target_path:
                 return
 
-    file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
+    file_handler = _build_login_log_file_handler()
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
     logger.addHandler(file_handler)
@@ -6741,6 +6756,7 @@ def attach_dashboard_filter_context(chart_payload, filter_kind, user_query, row_
     context = {
         "kind": kind,
         "user_query": str(user_query or "").strip(),
+        "preferred_chart_type": str(chart_payload.get("chart_type") or "").strip().lower(),
     }
     if row_limit is not None:
         try:
@@ -11551,6 +11567,7 @@ def chatbot_dashboard_filter():
     filter_context = payload.get("filter_context") if isinstance(payload.get("filter_context"), dict) else {}
     filter_kind = str(filter_context.get("kind", "")).strip().lower()
     user_query = str(filter_context.get("user_query", "")).strip()
+    preferred_chart_type = str(filter_context.get("preferred_chart_type", "")).strip().lower()
 
     if not filter_kind:
         return jsonify({"error": "filter_context.kind is required"}), 400
@@ -11629,7 +11646,14 @@ def chatbot_dashboard_filter():
             }
         )
 
-    chart_payload = build_chart_payload(rows, effective_query)
+    chart_query = effective_query
+    if preferred_chart_type in {"bar", "line", "pie", "scatter", "histogram"}:
+        chart_query = f"{effective_query} {preferred_chart_type} chart".strip()
+
+    chart_payload = build_chart_payload(rows, chart_query)
+    if isinstance(chart_payload, dict) and preferred_chart_type:
+        chart_payload = _force_requested_chart_type(chart_payload, preferred_chart_type)
+
     if isinstance(chart_payload, dict):
         attach_dashboard_filter_context(chart_payload, filter_kind, user_query, row_limit=row_limit)
 
