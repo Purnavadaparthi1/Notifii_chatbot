@@ -2125,7 +2125,7 @@
 
       card.appendChild(head);
       card.appendChild(body);
-      if (body.querySelector(".chart-wrap")) {
+      if (body.querySelector(".chart-wrap") || body.querySelector(".table-wrap")) {
         setupDashboardCardBorderResize(card);
       }
       dashboardItems.appendChild(card);
