@@ -455,6 +455,24 @@
       background: #fff;
     }
 
+    .multi-table-wrap {
+      margin-top: 10px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .table-group {
+      display: grid;
+      gap: 4px;
+    }
+
+    .table-group-title {
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-weight: 800;
+      letter-spacing: 0.2px;
+    }
+
     .result-table {
       width: 100%;
       border-collapse: collapse;
@@ -2308,6 +2326,48 @@
       return wrap;
     }
 
+    function appendMultiTableToBubble(bubble, tableGroups) {
+      if (!bubble || !Array.isArray(tableGroups) || tableGroups.length === 0) {
+        return null;
+      }
+
+      const groupContainer = document.createElement("div");
+      groupContainer.className = "multi-table-wrap";
+
+      let renderedCount = 0;
+      for (const groupRows of tableGroups) {
+        if (!Array.isArray(groupRows) || groupRows.length === 0) {
+          continue;
+        }
+
+        renderedCount += 1;
+        const group = document.createElement("section");
+        group.className = "table-group";
+
+        const title = document.createElement("div");
+        title.className = "table-group-title";
+        title.textContent = `Result set ${renderedCount}`;
+        group.appendChild(title);
+
+        const tableWrap = document.createElement("div");
+        tableWrap.className = "table-wrap";
+        tableWrap.setAttribute("data-table-rows", JSON.stringify(groupRows));
+        tableWrap.setAttribute("data-original-table-rows", JSON.stringify(groupRows));
+        const columns = Object.keys(groupRows[0] || {});
+        renderTableWrap(tableWrap, groupRows, columns);
+        group.appendChild(tableWrap);
+
+        groupContainer.appendChild(group);
+      }
+
+      if (renderedCount === 0) {
+        return null;
+      }
+
+      bubble.appendChild(groupContainer);
+      return groupContainer;
+    }
+
     function appendKeyValueToBubble(bubble, rows) {
       if (!bubble || !Array.isArray(rows) || rows.length === 0) {
         return null;
@@ -2524,6 +2584,9 @@
           if (data.display === "chart" && data.chart) {
             const chartElement = appendChartToBubble(bubble, data.chart);
             wireResultToDashboard(chartElement, "Chart");
+          } else if (data.display === "multi_table" && Array.isArray(data.table_groups) && data.table_groups.length > 0) {
+            const multiTableElement = appendMultiTableToBubble(bubble, data.table_groups);
+            wireResultToDashboard(multiTableElement, "Table");
           } else if (data.display === "table" && Array.isArray(data.rows) && data.rows.length > 0) {
             const tableElement = appendTableToBubble(bubble, data.rows);
             wireResultToDashboard(tableElement, "Table");

@@ -3079,6 +3079,101 @@ def build_table_disambiguation_response(candidate_tables):
     )
 
 
+def build_multi_table_found_response(candidate_tables, rows_count):
+    """Build deterministic answer when data is found across multiple tables."""
+    _ = candidate_tables
+    return f"I found matching records in multiple tables. Showing {int(rows_count or 0)} record(s) in table format."
+
+
+def fetch_multi_table_candidate_rows(user_query, account_id, schema_map, candidate_tables, per_table_limit=50, total_limit=TABLE_VIEW_SAFE_LIMIT):
+    """Fetch account-scoped rows from multiple candidate tables as individual groups."""
+    if not isinstance(candidate_tables, (list, tuple)):
+        return [], [], ""
+
+    runtime_table_set = set(_get_runtime_supported_tables(schema_map))
+    if not runtime_table_set:
+        return [], [], ""
+
+    unique_tables = []
+    seen_tables = set()
+    for table_name in candidate_tables:
+        normalized = str(table_name or "").strip().lower()
+        if not normalized or normalized in seen_tables:
+            continue
+        if normalized not in runtime_table_set:
+            continue
+        seen_tables.add(normalized)
+        unique_tables.append(normalized)
+
+    if not unique_tables:
+        return [], [], ""
+
+    try:
+        safe_per_table_limit = max(1, min(int(per_table_limit or 50), 200))
+    except (TypeError, ValueError):
+        safe_per_table_limit = 50
+
+    try:
+        safe_total_limit = max(1, min(int(total_limit or TABLE_VIEW_SAFE_LIMIT), TABLE_VIEW_SAFE_LIMIT))
+    except (TypeError, ValueError):
+        safe_total_limit = TABLE_VIEW_SAFE_LIMIT
+
+    grouped_rows = []
+    combined_rows = []
+    sql_entries = []
+
+    for table_name in unique_tables:
+        table_sql = build_direct_table_fast_sql(
+            account_id,
+            user_query,
+            table_name,
+            schema_map,
+            row_limit=safe_per_table_limit,
+        )
+        if not table_sql:
+            table_sql, candidate_status = build_account_scoped_candidate_sql(
+                table_name,
+                account_id,
+                schema_map,
+                row_limit=safe_per_table_limit,
+            )
+            if not table_sql:
+                sql_entries.append(f"{table_name}:candidate_failed:{candidate_status}")
+                continue
+
+        table_sql = normalize_generated_sql_for_log(table_sql)
+        sql_entries.append(f"{table_name}:{table_sql}")
+        table_rows, table_status, _ = execute_query_with_dataset_fallback(
+            table_sql,
+            account_id,
+            schema_map,
+            max_rows=safe_per_table_limit,
+        )
+        if table_status != "ok" or not table_rows:
+            continue
+        current_group = []
+        for row in table_rows:
+            if isinstance(row, dict):
+                row_value = dict(row)
+            else:
+                row_value = {"value": str(row)}
+            current_group.append(row_value)
+            combined_rows.append(row_value)
+            if len(combined_rows) >= safe_total_limit:
+                break
+
+        if current_group:
+            grouped_rows.append(current_group)
+
+        if len(combined_rows) >= safe_total_limit:
+            break
+
+    generated_sql = ""
+    if sql_entries:
+        generated_sql = "MULTI_TABLE_CANDIDATE_QUERY | " + " || ".join(sql_entries)
+    return grouped_rows, combined_rows, generated_sql
+
+
 def _is_ambiguous_marker(value):
     """Return True when a routing source/reason denotes ambiguous table selection."""
     return "ambiguous" in str(value or "").strip().lower()
@@ -9046,6 +9141,45 @@ def chatbot_ask():
                 max_tables=3,
             )
             if _is_ambiguous_marker(prompt_table_source) and len(prompt_tables) > 1:
+                candidate_limit = report_query_limit if isinstance(report_query_limit, int) and report_query_limit > 0 else 50
+                multi_groups, multi_rows, multi_sql = fetch_multi_table_candidate_rows(
+                    user_query,
+                    account_id,
+                    schema_map,
+                    prompt_tables,
+                    per_table_limit=candidate_limit,
+                    total_limit=TABLE_VIEW_SAFE_LIMIT,
+                )
+                if multi_groups:
+                    table_rows = build_table_dataset(multi_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+                    table_groups_payload = [
+                        build_table_dataset(group_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+                        for group_rows in multi_groups
+                        if isinstance(group_rows, list) and group_rows
+                    ]
+                    session["last_result_rows"] = to_json_safe_rows(table_rows)
+                    session["last_user_query"] = user_query
+                    answer = build_multi_table_found_response([], len(table_rows))
+                    log_chat_interaction(
+                        account_id,
+                        user_query,
+                        multi_sql,
+                        "ok:multi_table_candidates",
+                        len(table_rows),
+                        answer,
+                    )
+                    mark_step("chatbot_ask_report_multi_table_candidates_return", rows=len(table_rows))
+                    update_chart_context("table", None)
+                    return jsonify(
+                        {
+                            "answer": answer,
+                            "rows": table_rows,
+                            "table_groups": table_groups_payload,
+                            "display": "multi_table",
+                            "chart": None,
+                            "status": "ok",
+                        }
+                    )
                 answer = build_table_disambiguation_response(prompt_tables)
                 log_chat_interaction(
                     account_id,
@@ -9196,6 +9330,46 @@ def chatbot_ask():
                         if report_sql:
                             report_sql = normalize_generated_sql_for_log(report_sql)
                         else:
+                            if len(candidate_tables) > 1:
+                                candidate_limit = report_query_limit if isinstance(report_query_limit, int) and report_query_limit > 0 else 50
+                                multi_groups, multi_rows, multi_sql = fetch_multi_table_candidate_rows(
+                                    user_query,
+                                    account_id,
+                                    schema_map,
+                                    candidate_tables,
+                                    per_table_limit=candidate_limit,
+                                    total_limit=TABLE_VIEW_SAFE_LIMIT,
+                                )
+                                if multi_groups:
+                                    table_rows = build_table_dataset(multi_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+                                    table_groups_payload = [
+                                        build_table_dataset(group_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+                                        for group_rows in multi_groups
+                                        if isinstance(group_rows, list) and group_rows
+                                    ]
+                                    session["last_result_rows"] = to_json_safe_rows(table_rows)
+                                    session["last_user_query"] = user_query
+                                    answer = build_multi_table_found_response([], len(table_rows))
+                                    log_chat_interaction(
+                                        account_id,
+                                        user_query,
+                                        multi_sql,
+                                        "ok:multi_table_candidates",
+                                        len(table_rows),
+                                        answer,
+                                    )
+                                    mark_step("chatbot_ask_report_multi_table_fallback_return", rows=len(table_rows))
+                                    update_chart_context("table", None)
+                                    return jsonify(
+                                        {
+                                            "answer": answer,
+                                            "rows": table_rows,
+                                            "table_groups": table_groups_payload,
+                                            "display": "multi_table",
+                                            "chart": None,
+                                            "status": "ok",
+                                        }
+                                    )
                             answer = (
                                 build_table_disambiguation_response(candidate_tables)
                                 if len(candidate_tables) > 1
@@ -10952,6 +11126,44 @@ def chatbot_ask():
             max_tables=3,
         )
         if _is_ambiguous_marker(prompt_table_source) and len(prompt_tables) > 1:
+            multi_groups, multi_rows, multi_sql = fetch_multi_table_candidate_rows(
+                user_query,
+                account_id,
+                schema_map,
+                prompt_tables,
+                per_table_limit=50,
+                total_limit=TABLE_VIEW_SAFE_LIMIT,
+            )
+            if multi_groups:
+                table_rows = build_table_dataset(multi_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+                table_groups_payload = [
+                    build_table_dataset(group_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+                    for group_rows in multi_groups
+                    if isinstance(group_rows, list) and group_rows
+                ]
+                session["last_result_rows"] = to_json_safe_rows(table_rows)
+                session["last_user_query"] = user_query
+                answer = build_multi_table_found_response([], len(table_rows))
+                log_chat_interaction(
+                    account_id,
+                    user_query,
+                    multi_sql,
+                    "ok:multi_table_candidates",
+                    len(table_rows),
+                    answer,
+                )
+                mark_step("chatbot_ask_multi_table_candidates_return", rows=len(table_rows))
+                update_chart_context("table", None)
+                return jsonify(
+                    {
+                        "answer": answer,
+                        "rows": table_rows,
+                        "table_groups": table_groups_payload,
+                        "display": "multi_table",
+                        "chart": None,
+                        "status": "ok",
+                    }
+                )
             answer = build_table_disambiguation_response(prompt_tables)
             log_chat_interaction(
                 account_id,
@@ -11205,6 +11417,45 @@ def chatbot_ask():
                     else:
                         fallback_source = f"fallback_no_candidate_sql:{candidate_status}"
                 if not generated_sql:
+                    if len(candidate_tables) > 1:
+                        multi_groups, multi_rows, multi_sql = fetch_multi_table_candidate_rows(
+                            user_query,
+                            account_id,
+                            schema_map,
+                            candidate_tables,
+                            per_table_limit=50,
+                            total_limit=TABLE_VIEW_SAFE_LIMIT,
+                        )
+                        if multi_groups:
+                            table_rows = build_table_dataset(multi_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+                            table_groups_payload = [
+                                build_table_dataset(group_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+                                for group_rows in multi_groups
+                                if isinstance(group_rows, list) and group_rows
+                            ]
+                            session["last_result_rows"] = to_json_safe_rows(table_rows)
+                            session["last_user_query"] = user_query
+                            answer = build_multi_table_found_response([], len(table_rows))
+                            log_chat_interaction(
+                                account_id,
+                                user_query,
+                                multi_sql,
+                                "ok:multi_table_candidates",
+                                len(table_rows),
+                                answer,
+                            )
+                            mark_step("chatbot_ask_multi_table_fallback_return", rows=len(table_rows))
+                            update_chart_context("table", None)
+                            return jsonify(
+                                {
+                                    "answer": answer,
+                                    "rows": table_rows,
+                                    "table_groups": table_groups_payload,
+                                    "display": "multi_table",
+                                    "chart": None,
+                                    "status": "ok",
+                                }
+                            )
                     answer = (
                         build_table_disambiguation_response(candidate_tables)
                         if len(candidate_tables) > 1
@@ -11463,6 +11714,47 @@ def chatbot_ask():
         mark_step("chatbot_ask_chart_rows_reshaped", rows=len(sql_rows))
 
     if not sql_rows:
+        candidate_tables = detect_prompt_table_candidates(user_query, schema_map, max_tables=6)
+        if len(candidate_tables) > 1:
+            candidate_limit = requested_limit if isinstance(requested_limit, int) and requested_limit > 0 else 50
+            multi_groups, multi_rows, multi_sql = fetch_multi_table_candidate_rows(
+                user_query,
+                account_id,
+                schema_map,
+                candidate_tables,
+                per_table_limit=candidate_limit,
+                total_limit=TABLE_VIEW_SAFE_LIMIT,
+            )
+            if multi_groups:
+                table_rows = build_table_dataset(multi_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+                table_groups_payload = [
+                    build_table_dataset(group_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+                    for group_rows in multi_groups
+                    if isinstance(group_rows, list) and group_rows
+                ]
+                session["last_result_rows"] = to_json_safe_rows(table_rows)
+                session["last_user_query"] = user_query
+                answer = build_multi_table_found_response([], len(table_rows))
+                log_chat_interaction(
+                    account_id,
+                    user_query,
+                    multi_sql,
+                    "ok:multi_table_candidates",
+                    len(table_rows),
+                    answer,
+                )
+                mark_step("chatbot_ask_multi_table_no_data_recovery", rows=len(table_rows))
+                update_chart_context("table", None)
+                return jsonify(
+                    {
+                        "answer": answer,
+                        "rows": table_rows,
+                        "table_groups": table_groups_payload,
+                        "display": "multi_table",
+                        "chart": None,
+                        "status": "ok",
+                    }
+                )
         if explicit_tables:
             answer = build_explicit_table_no_data_response(explicit_tables)
         else:
