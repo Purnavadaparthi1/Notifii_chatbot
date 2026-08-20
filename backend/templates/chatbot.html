@@ -2346,7 +2346,8 @@
 
         const title = document.createElement("div");
         title.className = "table-group-title";
-        title.textContent = `Result set ${renderedCount}`;
+        const sourceTableName = String((groupRows[0] && groupRows[0]._source_table) || "").trim();
+        title.textContent = sourceTableName ? `Table: ${sourceTableName}` : `Result set ${renderedCount}`;
         group.appendChild(title);
 
         const tableWrap = document.createElement("div");
@@ -2581,10 +2582,11 @@
             const reportElement = appendReportToBubble(bubble, data.report);
             wireResultToDashboard(reportElement, "Report");
           }
-          if (data.display === "chart" && data.chart) {
+          if ((data.display === "chart" || data.display === "multi_table_chart") && data.chart) {
             const chartElement = appendChartToBubble(bubble, data.chart);
             wireResultToDashboard(chartElement, "Chart");
-          } else if (data.display === "multi_table" && Array.isArray(data.table_groups) && data.table_groups.length > 0) {
+          }
+          if ((data.display === "multi_table" || data.display === "multi_table_chart") && Array.isArray(data.table_groups) && data.table_groups.length > 0) {
             const multiTableElement = appendMultiTableToBubble(bubble, data.table_groups);
             wireResultToDashboard(multiTableElement, "Table");
           } else if (data.display === "table" && Array.isArray(data.rows) && data.rows.length > 0) {

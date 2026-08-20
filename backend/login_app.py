@@ -3082,7 +3082,56 @@ def build_table_disambiguation_response(candidate_tables):
 def build_multi_table_found_response(candidate_tables, rows_count):
     """Build deterministic answer when data is found across multiple tables."""
     _ = candidate_tables
+    if int(rows_count or 0) <= 0:
+        return "I checked all matching tables individually and found no matching data. Showing per-table results."
     return f"I found matching records in multiple tables. Showing {int(rows_count or 0)} record(s) in table format."
+
+
+def build_multi_table_visual_payload(user_query, grouped_rows, combined_rows):
+    """Build multi-table response payload with optional chart summary for chart/trend asks."""
+    table_rows = build_table_dataset(combined_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+    table_groups_payload = [
+        build_table_dataset(group_rows, limit=TABLE_VIEW_SAFE_LIMIT)
+        for group_rows in (grouped_rows or [])
+        if isinstance(group_rows, list) and group_rows
+    ]
+
+    no_data_markers = {"no_data", "query_failed", "candidate_failed"}
+    summary_rows = []
+    total_data_rows = 0
+    for index, group_rows in enumerate(table_groups_payload, start=1):
+        first_row = group_rows[0] if group_rows else {}
+        table_name = str(first_row.get("_source_table") or "").strip() or f"table_{index}"
+        result_marker = str(first_row.get("_result") or "").strip().lower()
+        row_count = 0 if result_marker in no_data_markers else len(group_rows)
+        total_data_rows += row_count
+        summary_rows.append(
+            {
+                "table_name": table_name,
+                "record_count": row_count,
+            }
+        )
+
+    chart_payload = None
+    display_mode = "multi_table"
+    if summary_rows and (query_requests_chart_view(user_query) or should_auto_chart_view(user_query, summary_rows)):
+        chart_payload = build_chart_payload(summary_rows, user_query)
+        if chart_payload:
+            display_mode = "multi_table_chart"
+        elif is_specific_chart_request(user_query):
+            chart_payload = build_chart_unavailable_payload(user_query)
+            display_mode = "multi_table_chart"
+
+    answer = build_multi_table_found_response([], total_data_rows)
+    return {
+        "answer": answer,
+        "rows": table_rows,
+        "table_groups": table_groups_payload,
+        "display": display_mode,
+        "chart": chart_payload,
+        "status": "ok",
+        "data_rows": total_data_rows,
+    }
 
 
 def fetch_multi_table_candidate_rows(user_query, account_id, schema_map, candidate_tables, per_table_limit=50, total_limit=TABLE_VIEW_SAFE_LIMIT):
@@ -3090,23 +3139,36 @@ def fetch_multi_table_candidate_rows(user_query, account_id, schema_map, candida
     if not isinstance(candidate_tables, (list, tuple)):
         return [], [], ""
 
-    runtime_table_set = set(_get_runtime_supported_tables(schema_map))
-    if not runtime_table_set:
+    normalized_candidates = []
+    seen_candidate_names = set()
+    for table_name in candidate_tables:
+        normalized = str(table_name or "").strip().lower()
+        if not normalized or normalized in seen_candidate_names:
+            continue
+        seen_candidate_names.add(normalized)
+        normalized_candidates.append(normalized)
+
+    if not normalized_candidates:
         return [], [], ""
+
+    runtime_table_set = set(_get_runtime_supported_tables(schema_map))
 
     unique_tables = []
     seen_tables = set()
-    for table_name in candidate_tables:
-        normalized = str(table_name or "").strip().lower()
-        if not normalized or normalized in seen_tables:
+    for normalized in normalized_candidates:
+        if normalized in seen_tables:
             continue
-        if normalized not in runtime_table_set:
+        # Prefer runtime-supported tables when available, but do not drop candidates
+        # so ambiguous queries always return per-table output.
+        if runtime_table_set and normalized not in runtime_table_set:
+            unique_tables.append(normalized)
+            seen_tables.add(normalized)
             continue
         seen_tables.add(normalized)
         unique_tables.append(normalized)
 
     if not unique_tables:
-        return [], [], ""
+        unique_tables = list(normalized_candidates)
 
     try:
         safe_per_table_limit = max(1, min(int(per_table_limit or 50), 200))
@@ -3139,6 +3201,15 @@ def fetch_multi_table_candidate_rows(user_query, account_id, schema_map, candida
             )
             if not table_sql:
                 sql_entries.append(f"{table_name}:candidate_failed:{candidate_status}")
+                grouped_rows.append(
+                    [
+                        {
+                            "_source_table": table_name,
+                            "_result": "candidate_failed",
+                            "_message": f"Unable to build an account-scoped query for this table ({candidate_status}).",
+                        }
+                    ]
+                )
                 continue
 
         table_sql = normalize_generated_sql_for_log(table_sql)
@@ -3149,24 +3220,27 @@ def fetch_multi_table_candidate_rows(user_query, account_id, schema_map, candida
             schema_map,
             max_rows=safe_per_table_limit,
         )
-        if table_status != "ok" or not table_rows:
-            continue
         current_group = []
-        for row in table_rows:
-            if isinstance(row, dict):
-                row_value = dict(row)
-            else:
-                row_value = {"value": str(row)}
-            current_group.append(row_value)
-            combined_rows.append(row_value)
-            if len(combined_rows) >= safe_total_limit:
-                break
+        if table_status == "ok" and table_rows:
+            for row in table_rows:
+                if isinstance(row, dict):
+                    row_value = {"_source_table": table_name, **dict(row)}
+                else:
+                    row_value = {"_source_table": table_name, "value": str(row)}
+                current_group.append(row_value)
+                if len(combined_rows) < safe_total_limit:
+                    combined_rows.append(row_value)
+        else:
+            status_text = "no_data" if table_status == "ok" else str(table_status or "query_failed")
+            current_group.append(
+                {
+                    "_source_table": table_name,
+                    "_result": status_text,
+                    "_message": "No matching data found for this table." if status_text == "no_data" else "Unable to fetch data for this table.",
+                }
+            )
 
-        if current_group:
-            grouped_rows.append(current_group)
-
-        if len(combined_rows) >= safe_total_limit:
-            break
+        grouped_rows.append(current_group)
 
     generated_sql = ""
     if sql_entries:
@@ -9151,35 +9225,23 @@ def chatbot_ask():
                     total_limit=TABLE_VIEW_SAFE_LIMIT,
                 )
                 if multi_groups:
-                    table_rows = build_table_dataset(multi_rows, limit=TABLE_VIEW_SAFE_LIMIT)
-                    table_groups_payload = [
-                        build_table_dataset(group_rows, limit=TABLE_VIEW_SAFE_LIMIT)
-                        for group_rows in multi_groups
-                        if isinstance(group_rows, list) and group_rows
-                    ]
-                    session["last_result_rows"] = to_json_safe_rows(table_rows)
+                    multi_payload = build_multi_table_visual_payload(user_query, multi_groups, multi_rows)
+                    session["last_result_rows"] = to_json_safe_rows(multi_payload.get("rows", []))
                     session["last_user_query"] = user_query
-                    answer = build_multi_table_found_response([], len(table_rows))
                     log_chat_interaction(
                         account_id,
                         user_query,
                         multi_sql,
                         "ok:multi_table_candidates",
-                        len(table_rows),
-                        answer,
+                        int(multi_payload.get("data_rows", 0)),
+                        multi_payload.get("answer", ""),
                     )
-                    mark_step("chatbot_ask_report_multi_table_candidates_return", rows=len(table_rows))
-                    update_chart_context("table", None)
-                    return jsonify(
-                        {
-                            "answer": answer,
-                            "rows": table_rows,
-                            "table_groups": table_groups_payload,
-                            "display": "multi_table",
-                            "chart": None,
-                            "status": "ok",
-                        }
+                    mark_step("chatbot_ask_report_multi_table_candidates_return", rows=len(multi_payload.get("rows", [])))
+                    update_chart_context(
+                        "chart" if multi_payload.get("chart") else "table",
+                        multi_payload.get("chart"),
                     )
+                    return jsonify({k: v for k, v in multi_payload.items() if k != "data_rows"})
                 answer = build_table_disambiguation_response(prompt_tables)
                 log_chat_interaction(
                     account_id,
@@ -9224,6 +9286,33 @@ def chatbot_ask():
                         schema_map,
                         max_tables=5,
                     )
+                    multi_groups, multi_rows, multi_sql = fetch_multi_table_candidate_rows(
+                        user_query,
+                        account_id,
+                        schema_map,
+                        ambiguity_candidates,
+                        per_table_limit=(report_query_limit if isinstance(report_query_limit, int) and report_query_limit > 0 else 50),
+                        total_limit=TABLE_VIEW_SAFE_LIMIT,
+                    )
+                    if multi_groups:
+                        multi_payload = build_multi_table_visual_payload(user_query, multi_groups, multi_rows)
+                        session["last_result_rows"] = to_json_safe_rows(multi_payload.get("rows", []))
+                        session["last_user_query"] = user_query
+                        log_chat_interaction(
+                            account_id,
+                            user_query,
+                            multi_sql,
+                            "ok:multi_table_candidates",
+                            int(multi_payload.get("data_rows", 0)),
+                            multi_payload.get("answer", ""),
+                        )
+                        mark_step("chatbot_ask_report_direct_table_ambiguous_resolved", rows=len(multi_payload.get("rows", [])))
+                        update_chart_context(
+                            "chart" if multi_payload.get("chart") else "table",
+                            multi_payload.get("chart"),
+                        )
+                        return jsonify({k: v for k, v in multi_payload.items() if k != "data_rows"})
+
                     answer = build_table_disambiguation_response(ambiguity_candidates)
                     log_chat_interaction(
                         account_id,
@@ -9341,35 +9430,23 @@ def chatbot_ask():
                                     total_limit=TABLE_VIEW_SAFE_LIMIT,
                                 )
                                 if multi_groups:
-                                    table_rows = build_table_dataset(multi_rows, limit=TABLE_VIEW_SAFE_LIMIT)
-                                    table_groups_payload = [
-                                        build_table_dataset(group_rows, limit=TABLE_VIEW_SAFE_LIMIT)
-                                        for group_rows in multi_groups
-                                        if isinstance(group_rows, list) and group_rows
-                                    ]
-                                    session["last_result_rows"] = to_json_safe_rows(table_rows)
+                                    multi_payload = build_multi_table_visual_payload(user_query, multi_groups, multi_rows)
+                                    session["last_result_rows"] = to_json_safe_rows(multi_payload.get("rows", []))
                                     session["last_user_query"] = user_query
-                                    answer = build_multi_table_found_response([], len(table_rows))
                                     log_chat_interaction(
                                         account_id,
                                         user_query,
                                         multi_sql,
                                         "ok:multi_table_candidates",
-                                        len(table_rows),
-                                        answer,
+                                        int(multi_payload.get("data_rows", 0)),
+                                        multi_payload.get("answer", ""),
                                     )
-                                    mark_step("chatbot_ask_report_multi_table_fallback_return", rows=len(table_rows))
-                                    update_chart_context("table", None)
-                                    return jsonify(
-                                        {
-                                            "answer": answer,
-                                            "rows": table_rows,
-                                            "table_groups": table_groups_payload,
-                                            "display": "multi_table",
-                                            "chart": None,
-                                            "status": "ok",
-                                        }
+                                    mark_step("chatbot_ask_report_multi_table_fallback_return", rows=len(multi_payload.get("rows", [])))
+                                    update_chart_context(
+                                        "chart" if multi_payload.get("chart") else "table",
+                                        multi_payload.get("chart"),
                                     )
+                                    return jsonify({k: v for k, v in multi_payload.items() if k != "data_rows"})
                             answer = (
                                 build_table_disambiguation_response(candidate_tables)
                                 if len(candidate_tables) > 1
@@ -11135,35 +11212,23 @@ def chatbot_ask():
                 total_limit=TABLE_VIEW_SAFE_LIMIT,
             )
             if multi_groups:
-                table_rows = build_table_dataset(multi_rows, limit=TABLE_VIEW_SAFE_LIMIT)
-                table_groups_payload = [
-                    build_table_dataset(group_rows, limit=TABLE_VIEW_SAFE_LIMIT)
-                    for group_rows in multi_groups
-                    if isinstance(group_rows, list) and group_rows
-                ]
-                session["last_result_rows"] = to_json_safe_rows(table_rows)
+                multi_payload = build_multi_table_visual_payload(user_query, multi_groups, multi_rows)
+                session["last_result_rows"] = to_json_safe_rows(multi_payload.get("rows", []))
                 session["last_user_query"] = user_query
-                answer = build_multi_table_found_response([], len(table_rows))
                 log_chat_interaction(
                     account_id,
                     user_query,
                     multi_sql,
                     "ok:multi_table_candidates",
-                    len(table_rows),
-                    answer,
+                    int(multi_payload.get("data_rows", 0)),
+                    multi_payload.get("answer", ""),
                 )
-                mark_step("chatbot_ask_multi_table_candidates_return", rows=len(table_rows))
-                update_chart_context("table", None)
-                return jsonify(
-                    {
-                        "answer": answer,
-                        "rows": table_rows,
-                        "table_groups": table_groups_payload,
-                        "display": "multi_table",
-                        "chart": None,
-                        "status": "ok",
-                    }
+                mark_step("chatbot_ask_multi_table_candidates_return", rows=len(multi_payload.get("rows", [])))
+                update_chart_context(
+                    "chart" if multi_payload.get("chart") else "table",
+                    multi_payload.get("chart"),
                 )
+                return jsonify({k: v for k, v in multi_payload.items() if k != "data_rows"})
             answer = build_table_disambiguation_response(prompt_tables)
             log_chat_interaction(
                 account_id,
@@ -11214,6 +11279,33 @@ def chatbot_ask():
                 schema_map,
                 max_tables=5,
             )
+            multi_groups, multi_rows, multi_sql = fetch_multi_table_candidate_rows(
+                user_query,
+                account_id,
+                schema_map,
+                ambiguity_candidates,
+                per_table_limit=50,
+                total_limit=TABLE_VIEW_SAFE_LIMIT,
+            )
+            if multi_groups:
+                multi_payload = build_multi_table_visual_payload(user_query, multi_groups, multi_rows)
+                session["last_result_rows"] = to_json_safe_rows(multi_payload.get("rows", []))
+                session["last_user_query"] = user_query
+                log_chat_interaction(
+                    account_id,
+                    user_query,
+                    multi_sql,
+                    "ok:multi_table_candidates",
+                    int(multi_payload.get("data_rows", 0)),
+                    multi_payload.get("answer", ""),
+                )
+                mark_step("chatbot_ask_direct_table_ambiguous_resolved", rows=len(multi_payload.get("rows", [])))
+                update_chart_context(
+                    "chart" if multi_payload.get("chart") else "table",
+                    multi_payload.get("chart"),
+                )
+                return jsonify({k: v for k, v in multi_payload.items() if k != "data_rows"})
+
             answer = build_table_disambiguation_response(ambiguity_candidates)
             log_chat_interaction(
                 account_id,
@@ -11427,35 +11519,23 @@ def chatbot_ask():
                             total_limit=TABLE_VIEW_SAFE_LIMIT,
                         )
                         if multi_groups:
-                            table_rows = build_table_dataset(multi_rows, limit=TABLE_VIEW_SAFE_LIMIT)
-                            table_groups_payload = [
-                                build_table_dataset(group_rows, limit=TABLE_VIEW_SAFE_LIMIT)
-                                for group_rows in multi_groups
-                                if isinstance(group_rows, list) and group_rows
-                            ]
-                            session["last_result_rows"] = to_json_safe_rows(table_rows)
+                            multi_payload = build_multi_table_visual_payload(user_query, multi_groups, multi_rows)
+                            session["last_result_rows"] = to_json_safe_rows(multi_payload.get("rows", []))
                             session["last_user_query"] = user_query
-                            answer = build_multi_table_found_response([], len(table_rows))
                             log_chat_interaction(
                                 account_id,
                                 user_query,
                                 multi_sql,
                                 "ok:multi_table_candidates",
-                                len(table_rows),
-                                answer,
+                                int(multi_payload.get("data_rows", 0)),
+                                multi_payload.get("answer", ""),
                             )
-                            mark_step("chatbot_ask_multi_table_fallback_return", rows=len(table_rows))
-                            update_chart_context("table", None)
-                            return jsonify(
-                                {
-                                    "answer": answer,
-                                    "rows": table_rows,
-                                    "table_groups": table_groups_payload,
-                                    "display": "multi_table",
-                                    "chart": None,
-                                    "status": "ok",
-                                }
+                            mark_step("chatbot_ask_multi_table_fallback_return", rows=len(multi_payload.get("rows", [])))
+                            update_chart_context(
+                                "chart" if multi_payload.get("chart") else "table",
+                                multi_payload.get("chart"),
                             )
+                            return jsonify({k: v for k, v in multi_payload.items() if k != "data_rows"})
                     answer = (
                         build_table_disambiguation_response(candidate_tables)
                         if len(candidate_tables) > 1
@@ -11726,35 +11806,23 @@ def chatbot_ask():
                 total_limit=TABLE_VIEW_SAFE_LIMIT,
             )
             if multi_groups:
-                table_rows = build_table_dataset(multi_rows, limit=TABLE_VIEW_SAFE_LIMIT)
-                table_groups_payload = [
-                    build_table_dataset(group_rows, limit=TABLE_VIEW_SAFE_LIMIT)
-                    for group_rows in multi_groups
-                    if isinstance(group_rows, list) and group_rows
-                ]
-                session["last_result_rows"] = to_json_safe_rows(table_rows)
+                multi_payload = build_multi_table_visual_payload(user_query, multi_groups, multi_rows)
+                session["last_result_rows"] = to_json_safe_rows(multi_payload.get("rows", []))
                 session["last_user_query"] = user_query
-                answer = build_multi_table_found_response([], len(table_rows))
                 log_chat_interaction(
                     account_id,
                     user_query,
                     multi_sql,
                     "ok:multi_table_candidates",
-                    len(table_rows),
-                    answer,
+                    int(multi_payload.get("data_rows", 0)),
+                    multi_payload.get("answer", ""),
                 )
-                mark_step("chatbot_ask_multi_table_no_data_recovery", rows=len(table_rows))
-                update_chart_context("table", None)
-                return jsonify(
-                    {
-                        "answer": answer,
-                        "rows": table_rows,
-                        "table_groups": table_groups_payload,
-                        "display": "multi_table",
-                        "chart": None,
-                        "status": "ok",
-                    }
+                mark_step("chatbot_ask_multi_table_no_data_recovery", rows=len(multi_payload.get("rows", [])))
+                update_chart_context(
+                    "chart" if multi_payload.get("chart") else "table",
+                    multi_payload.get("chart"),
                 )
+                return jsonify({k: v for k, v in multi_payload.items() if k != "data_rows"})
         if explicit_tables:
             answer = build_explicit_table_no_data_response(explicit_tables)
         else:
