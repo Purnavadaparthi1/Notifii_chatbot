@@ -22,6 +22,7 @@
       --table-head-ink: #f8fafb;
       --table-row-alt: #f9fcfd;
       --dashboard-tile-height: clamp(280px, calc((100dvh - 250px) / 2), 420px);
+      --chat-dock-width: min(620px, 46vw);
     }
 
     * { box-sizing: border-box; }
@@ -53,6 +54,14 @@
       overflow: hidden;
       box-shadow: none;
       animation: drop .35s ease-out;
+    }
+
+    body.dashboard-first .shell {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    body.dashboard-first .dashboard-panel {
+      border-right: none;
     }
 
     .dashboard-panel {
@@ -100,12 +109,13 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
       grid-auto-rows: minmax(var(--dashboard-tile-height), auto);
       gap: 10px;
-      min-height: 0;
+      min-height: calc(var(--dashboard-tile-height) + 20px);
       flex: 0 0 auto;
       overflow: visible;
       width: 100%;
       align-content: start;
       padding-bottom: 10px;
+      position: relative;
     }
 
     .dashboard-items,
@@ -139,6 +149,58 @@
       line-height: 1.35;
     }
 
+    .dashboard-controls-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      width: 100%;
+    }
+
+    .dashboard-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      align-self: center;
+      flex: 0 0 auto;
+      gap: 8px;
+      margin: 0;
+    }
+
+    .dashboard-mode-btn {
+      border: 1px solid #c2d2d9;
+      border-radius: 8px;
+      padding: 6px 11px;
+      font-size: 0.78rem;
+      font-weight: 800;
+      line-height: 1;
+      min-height: 32px;
+      background: #fff;
+      color: #1d3b49;
+      cursor: pointer;
+    }
+
+    .dashboard-mode-btn.primary {
+      background: #1d7f6c;
+      border-color: #1d7f6c;
+      color: #fff;
+    }
+
+    .dashboard-mode-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .dashboard-save-status {
+      font-size: 0.76rem;
+      color: #4f6672;
+      font-weight: 700;
+      min-height: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 320px;
+    }
+
     .dashboard-filter {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -148,6 +210,17 @@
       border: 1px solid #d0dde3;
       border-radius: 10px;
       background: #f7fbfc;
+      flex: 1 1 auto;
+      width: min(100%, 760px);
+      margin: 0;
+    }
+
+    .dashboard-panel.is-locked .dashboard-card {
+      box-shadow: 0 2px 8px rgba(22, 53, 67, 0.06);
+    }
+
+    .dashboard-panel.is-locked .dashboard-card.floating-kpi .dashboard-card-head {
+      cursor: default;
     }
 
     .dashboard-filter-field {
@@ -222,6 +295,23 @@
       grid-template-rows: auto 1fr;
     }
 
+    .dashboard-card.floating-kpi {
+      position: absolute;
+      width: min(360px, calc(100% - 12px));
+      max-width: calc(100% - 12px);
+      z-index: 6;
+      margin: 0;
+    }
+
+    .dashboard-card.floating-kpi .dashboard-card-head {
+      cursor: move;
+    }
+
+    .dashboard-card.floating-kpi .dashboard-card-actions,
+    .dashboard-card.floating-kpi .dashboard-card-actions * {
+      cursor: default;
+    }
+
     .dashboard-card.is-resizable-card {
       transition: border-color .12s ease;
     }
@@ -246,6 +336,10 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+    }
+
+    .dashboard-card-head > span {
+      font-weight: 900;
     }
 
     .dashboard-remove {
@@ -367,6 +461,115 @@
       overflow: hidden;
     }
 
+    body.dashboard-first .chat-shell {
+      position: fixed;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: var(--chat-dock-width);
+      height: 100dvh;
+      border-left: 1px solid #bfd1d7;
+      border-top: none;
+      border-right: none;
+      border-bottom: none;
+      border-radius: 0;
+      box-shadow: -10px 0 24px rgba(17, 40, 50, 0.2);
+      background: #fff;
+      z-index: 65;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(18px);
+      transition: opacity .18s ease, transform .18s ease;
+    }
+
+    body.dashboard-first.chat-open .dashboard-panel {
+      padding-right: calc(var(--chat-dock-width) + 18px);
+    }
+
+    body.dashboard-first.chat-open .chat-shell {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(0);
+    }
+
+    body.dashboard-first .chat-shell .sub {
+      font-size: 0.95rem;
+      line-height: 1.2;
+      margin-top: 3px;
+    }
+
+    body.dashboard-first .chat-shell .bubble {
+      max-width: min(90ch, 96%);
+    }
+
+    body.dashboard-first .chat-shell textarea {
+      min-height: 58px;
+      font-size: 0.94rem;
+    }
+
+    .chat-fab {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      width: 74px;
+      height: 74px;
+      border-radius: 50%;
+      border: none;
+      background: radial-gradient(circle at 30% 30%, #44b6ff, #0f6f99 68%);
+      color: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.45rem;
+      font-weight: 800;
+      box-shadow: 0 10px 22px rgba(11, 56, 78, 0.35);
+      z-index: 70;
+      cursor: pointer;
+      transition: transform .16s ease, box-shadow .16s ease, opacity .14s ease;
+    }
+
+    .chat-fab-icon {
+      width: 38px;
+      height: 38px;
+      display: block;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+
+    .chat-fab:hover {
+      transform: translateY(-1px) scale(1.02);
+      box-shadow: 0 13px 24px rgba(11, 56, 78, 0.4);
+    }
+
+    .chat-fab-label {
+      position: absolute;
+      right: 72px;
+      bottom: 18px;
+      background: rgba(19, 48, 60, 0.92);
+      color: #fff;
+      border-radius: 8px;
+      padding: 5px 8px;
+      font-size: 0.73rem;
+      letter-spacing: 0.2px;
+      font-weight: 700;
+      white-space: nowrap;
+      opacity: 0;
+      transform: translateY(4px);
+      pointer-events: none;
+      transition: opacity .15s ease, transform .15s ease;
+    }
+
+    .chat-fab:hover .chat-fab-label {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    body.chat-open .chat-fab {
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.94);
+    }
+
     header {
       padding: 16px 20px;
       display: flex;
@@ -374,6 +577,30 @@
       justify-content: space-between;
       background: linear-gradient(120deg, #f7efe2, #f0f8ff);
       border-bottom: 1px solid var(--border);
+    }
+
+    .chat-header-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chat-close {
+      border: none;
+      border-radius: 10px;
+      background: #5e7380;
+      color: #fff;
+      font-size: 0.82rem;
+      font-weight: 800;
+      padding: 8px 10px;
+      cursor: pointer;
+      width: auto;
+      min-width: auto;
+      line-height: 1;
+    }
+
+    .chat-close:hover {
+      background: #4b5d66;
     }
 
     .title {
@@ -641,6 +868,14 @@
       padding: 10px;
     }
 
+    .report-wrap.kpi-single {
+      padding: 8px;
+    }
+
+    .report-wrap.kpi-single .report-kpis {
+      grid-template-columns: 1fr;
+    }
+
     .report-title {
       margin: 0 0 6px;
       font-size: 0.95rem;
@@ -774,6 +1009,7 @@
       .dashboard-items {
         grid-template-columns: 1fr;
         grid-auto-rows: minmax(260px, 46vh);
+        min-height: 340px;
       }
       .dashboard-card {
         min-height: 260px;
@@ -785,6 +1021,14 @@
       }
       .dashboard-filter {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      }
+      .dashboard-controls-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .dashboard-toolbar {
+        justify-content: flex-start;
+        align-self: flex-start;
       }
       .title { font-size: 1rem; }
       .sub { font-size: 0.8rem; }
@@ -799,6 +1043,27 @@
       }
       .dashboard-size-value {
         min-width: 40px;
+      }
+
+      body.dashboard-first .chat-shell {
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: min(100vw, 100vw);
+        height: 100dvh;
+      }
+
+      body.dashboard-first.chat-open .dashboard-panel {
+        padding-right: 16px;
+      }
+
+      .chat-fab {
+        right: 12px;
+        bottom: 12px;
+      }
+
+      .chat-fab-label {
+        display: none;
       }
     }
 
@@ -829,19 +1094,27 @@
     <aside id="dashboardPanel" class="dashboard-panel">
       <h2 class="dashboard-title">notifiiDashboard</h2>
       <p class="dashboard-sub">Drop chart/table/report anywhere in this panel, or use Add to Dashboard below each result.</p>
-      <section class="dashboard-filter" aria-label="Dashboard date filter">
-        <div class="dashboard-filter-field">
-          <label for="dashboardDateFrom" class="dashboard-filter-label">From date</label>
-          <input id="dashboardDateFrom" class="dashboard-date-input" type="date">
+      <div class="dashboard-controls-row">
+        <section class="dashboard-filter" aria-label="Dashboard date filter">
+          <div class="dashboard-filter-field">
+            <label for="dashboardDateFrom" class="dashboard-filter-label">From date</label>
+            <input id="dashboardDateFrom" class="dashboard-date-input" type="date">
+          </div>
+          <div class="dashboard-filter-field">
+            <label for="dashboardDateTo" class="dashboard-filter-label">To date</label>
+            <input id="dashboardDateTo" class="dashboard-date-input" type="date">
+          </div>
+          <button id="dashboardApplyDateFilter" class="dashboard-filter-btn" type="button">Apply</button>
+          <button id="dashboardClearDateFilter" class="dashboard-filter-btn secondary" type="button">Clear</button>
+          <div id="dashboardFilterStatus" class="dashboard-filter-status"></div>
+        </section>
+
+        <div class="dashboard-toolbar" aria-label="Dashboard controls">
+          <button id="dashboardEditBtn" class="dashboard-mode-btn" type="button">Edit</button>
+          <button id="dashboardSaveBtn" class="dashboard-mode-btn primary" type="button">Save</button>
+          <span id="dashboardSaveStatus" class="dashboard-save-status" aria-live="polite"></span>
         </div>
-        <div class="dashboard-filter-field">
-          <label for="dashboardDateTo" class="dashboard-filter-label">To date</label>
-          <input id="dashboardDateTo" class="dashboard-date-input" type="date">
-        </div>
-        <button id="dashboardApplyDateFilter" class="dashboard-filter-btn" type="button">Apply</button>
-        <button id="dashboardClearDateFilter" class="dashboard-filter-btn secondary" type="button">Clear</button>
-        <div id="dashboardFilterStatus" class="dashboard-filter-status"></div>
-      </section>
+      </div>
       <div id="dashboardItems" class="dashboard-items" aria-live="polite"></div>
     </aside>
 
@@ -851,7 +1124,10 @@
           <h1 class="title">Notifii chatbot</h1>
           <p class="sub">Account ID: {{ account_id }} | Session rows loaded: {{ account_data_count }}</p>
         </div>
-        <a class="logout" href="/logout">Logout</a>
+        <div class="chat-header-actions">
+          <button id="chatCloseBtn" class="chat-close" type="button" aria-label="Close chat panel">Close</button>
+          <a class="logout" href="/logout">Logout</a>
+        </div>
       </header>
 
       <section class="chat" id="chatWindow">
@@ -877,6 +1153,16 @@
     </section>
   </main>
 
+  <button id="chatFab" class="chat-fab" type="button" aria-label="Open chatbot" aria-expanded="false">
+    <img
+      class="chat-fab-icon"
+      src="{{ url_for('static', filename='images/chatbot-icon.jfif') }}"
+      alt="Chatbot"
+      loading="lazy"
+    >
+    <span class="chat-fab-label">Open chatbot</span>
+  </button>
+
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     const chatWindow = document.getElementById("chatWindow");
@@ -884,6 +1170,8 @@
     const messageInput = document.getElementById("messageInput");
     const sendBtn = document.getElementById("sendBtn");
     const typingIndicator = document.getElementById("typingIndicator");
+    const chatFab = document.getElementById("chatFab");
+    const chatCloseBtn = document.getElementById("chatCloseBtn");
     const dashboardPanel = document.getElementById("dashboardPanel");
     const dashboardItems = document.getElementById("dashboardItems");
     const dashboardDateFrom = document.getElementById("dashboardDateFrom");
@@ -891,17 +1179,109 @@
     const dashboardApplyDateFilter = document.getElementById("dashboardApplyDateFilter");
     const dashboardClearDateFilter = document.getElementById("dashboardClearDateFilter");
     const dashboardFilterStatus = document.getElementById("dashboardFilterStatus");
+    const dashboardEditBtn = document.getElementById("dashboardEditBtn");
+    const dashboardSaveBtn = document.getElementById("dashboardSaveBtn");
+    const dashboardSaveStatus = document.getElementById("dashboardSaveStatus");
     const dashboardItemSignatures = new Set();
     const dashboardPinnedSources = new Set();
+    const dashboardAccountId = String("{{ account_id }}" || "").trim();
+    const DASHBOARD_CARD_SCALE_DEFAULT = 1;
     const DASHBOARD_CARD_SCALE_MIN = 1;
     const DASHBOARD_CARD_SCALE_MAX = 2.4;
+    const DASHBOARD_KPI_CARD_SCALE_MIN = 0.35;
     const DASHBOARD_CARD_SCALE_STEP = 0.01;
     const DASHBOARD_CARD_BORDER_RESIZE_EDGE_PX = 10;
     const DASHBOARD_CARD_WIDTH_MIN_PX = 280;
+    const DASHBOARD_KPI_CARD_WIDTH_MIN_PX = 120;
+    const KPI_FLOATING_CARD_BASE_Z = 6;
+    let floatingKpiZCounter = KPI_FLOATING_CARD_BASE_Z;
+    let dashboardEditable = true;
 
     function setTypingIndicator(isVisible) {
       typingIndicator.classList.toggle("visible", isVisible);
       typingIndicator.setAttribute("aria-hidden", isVisible ? "false" : "true");
+    }
+
+    function openChatPanel() {
+      document.body.classList.add("chat-open");
+      if (chatFab) {
+        chatFab.setAttribute("aria-expanded", "true");
+      }
+      if (messageInput) {
+        messageInput.focus();
+      }
+    }
+
+    function closeChatPanel() {
+      document.body.classList.remove("chat-open");
+      if (chatFab) {
+        chatFab.setAttribute("aria-expanded", "false");
+        chatFab.focus();
+      }
+    }
+
+    function setDashboardSaveStatus(message, isError = false) {
+      if (!dashboardSaveStatus) {
+        return;
+      }
+      dashboardSaveStatus.textContent = String(message || "");
+      dashboardSaveStatus.style.color = isError ? "#b3342b" : "#4f6672";
+    }
+
+    function refreshDashboardSourceInteractivity() {
+      const sources = document.querySelectorAll(".dashboard-source, [data-dashboard-source-id]");
+      sources.forEach((source) => {
+        const sourceId = String(source.dataset.dashboardSourceId || "").trim();
+        const isPinned = sourceId ? dashboardPinnedSources.has(sourceId) : false;
+        const isDraggable = dashboardEditable && !isPinned;
+        source.setAttribute("draggable", isDraggable ? "true" : "false");
+
+        const actionButton = source.nextElementSibling?.querySelector(".add-dashboard-btn");
+        if (actionButton) {
+          if (isPinned) {
+            actionButton.disabled = true;
+            actionButton.textContent = "Added";
+          } else {
+            actionButton.disabled = !dashboardEditable;
+            actionButton.textContent = "Add to Dashboard";
+          }
+        }
+      });
+    }
+
+    function setDashboardEditMode(isEditable) {
+      dashboardEditable = Boolean(isEditable);
+      dashboardPanel.classList.toggle("is-locked", !dashboardEditable);
+
+      if (dashboardEditBtn) {
+        dashboardEditBtn.disabled = dashboardEditable;
+      }
+      if (dashboardSaveBtn) {
+        dashboardSaveBtn.disabled = !dashboardEditable;
+      }
+
+      dashboardItems.querySelectorAll(".dashboard-card").forEach((card) => {
+        const removeButton = card.querySelector(".dashboard-remove");
+        if (removeButton) {
+          removeButton.disabled = !dashboardEditable;
+        }
+
+        const controls = card.querySelector(".dashboard-card-size");
+        if (controls) {
+          const sizeButtons = controls.querySelectorAll(".dashboard-size-btn");
+          if (!dashboardEditable) {
+            sizeButtons.forEach((button) => {
+              button.disabled = true;
+            });
+          } else {
+            const currentScale = Number(card.dataset.scale || DASHBOARD_CARD_SCALE_DEFAULT);
+            applyDashboardCardScale(card, currentScale, controls);
+          }
+        }
+      });
+
+      refreshDashboardSourceInteractivity();
+      setDashboardSaveStatus(dashboardEditable ? "Edit mode enabled." : "Dashboard locked. Click Edit to modify.");
     }
 
     function escapeHtml(text) {
@@ -1198,6 +1578,413 @@
       };
     }
 
+    function parseNumericValue(value) {
+      if (value === null || value === undefined) {
+        return null;
+      }
+      const text = String(value).replace(/,/g, "").trim();
+      if (!text) {
+        return null;
+      }
+      const numeric = Number(text);
+      return Number.isFinite(numeric) ? numeric : null;
+    }
+
+    function normalizeKpiTargetKeys(rawTargets) {
+      if (!Array.isArray(rawTargets)) {
+        return [];
+      }
+      const validKeys = new Set([
+        "total_delivered",
+        "active_recipients",
+        "inactive_recipients",
+        "missing_contact",
+        "total_recipients",
+      ]);
+      const ordered = [];
+      for (const item of rawTargets) {
+        const key = String(item || "").trim().toLowerCase();
+        if (!key || !validKeys.has(key) || ordered.includes(key)) {
+          continue;
+        }
+        ordered.push(key);
+      }
+      return ordered;
+    }
+
+    function isBlankContactValue(value) {
+      const text = String(value === null || value === undefined ? "" : value).trim().toLowerCase();
+      return text === "" || text === "null" || text === "none" || text === "nan";
+    }
+
+    function isActiveRecipientStatus(value) {
+      const text = String(value === null || value === undefined ? "" : value).trim().toLowerCase();
+      if (!text) {
+        return false;
+      }
+      if (["active", "enabled", "working", "currently working"].includes(text)) {
+        return true;
+      }
+      if (/^\d+$/.test(text)) {
+        return Number(text) === 1;
+      }
+      return false;
+    }
+
+    function isInactiveRecipientStatus(value) {
+      const text = String(value === null || value === undefined ? "" : value).trim().toLowerCase();
+      if (!text) {
+        return false;
+      }
+      if (["inactive", "disabled", "deactivated", "not working", "non working", "not active"].includes(text)) {
+        return true;
+      }
+      if (/^\d+$/.test(text)) {
+        return Number(text) === 0;
+      }
+      return false;
+    }
+
+    function computeTargetedReportKpis(rows, requestedTargets) {
+      const safeRows = Array.isArray(rows) ? rows : [];
+      const keys = normalizeKpiTargetKeys(requestedTargets);
+      if (keys.length === 0) {
+        return [];
+      }
+
+      const firstRow = safeRows.length > 0 && typeof safeRows[0] === "object" && safeRows[0] !== null
+        ? safeRows[0]
+        : null;
+
+      const getAggregateMetric = (columnName) => {
+        if (!firstRow || !Object.prototype.hasOwnProperty.call(firstRow, columnName)) {
+          return null;
+        }
+        const parsed = parseNumericValue(firstRow[columnName]);
+        if (parsed === null) {
+          return null;
+        }
+        return Math.round(parsed);
+      };
+
+      const cards = [];
+      for (const key of keys) {
+        if (key === "total_delivered") {
+          const aggregateDelivered = getAggregateMetric("total_delivered");
+          if (aggregateDelivered !== null) {
+            cards.push({ label: "Total Delivered", value: aggregateDelivered });
+            continue;
+          }
+
+          let deliveredCount = 0;
+          if (safeRows.length > 0 && typeof safeRows[0] === "object" && safeRows[0] !== null) {
+            if (Object.prototype.hasOwnProperty.call(safeRows[0], "date_received")) {
+              deliveredCount = safeRows.filter((row) => {
+                const raw = row ? row.date_received : null;
+                if (isBlankContactValue(raw)) {
+                  return false;
+                }
+                const text = String(raw).trim();
+                return text !== "0000-00-00" && text !== "0000-00-00 00:00:00";
+              }).length;
+            } else if (Object.prototype.hasOwnProperty.call(safeRows[0], "package_count")) {
+              deliveredCount = safeRows.reduce((sum, row) => {
+                const value = parseNumericValue(row ? row.package_count : null);
+                return sum + (value === null ? 0 : Math.round(value));
+              }, 0);
+            } else if (Object.prototype.hasOwnProperty.call(safeRows[0], "total_records")) {
+              const value = parseNumericValue(safeRows[0].total_records);
+              deliveredCount = value === null ? safeRows.length : Math.round(value);
+            } else {
+              deliveredCount = safeRows.length;
+            }
+          }
+          cards.push({ label: "Total Delivered", value: deliveredCount });
+          continue;
+        }
+
+        if (key === "active_recipients") {
+          const aggregateActive = getAggregateMetric("active_recipients");
+          if (aggregateActive !== null) {
+            cards.push({ label: "Active Recipients", value: aggregateActive });
+            continue;
+          }
+
+          const activeCount = safeRows.reduce((sum, row) => {
+            return sum + (isActiveRecipientStatus(row ? row.recipient_status : null) ? 1 : 0);
+          }, 0);
+          cards.push({ label: "Active Recipients", value: activeCount });
+          continue;
+        }
+
+        if (key === "inactive_recipients") {
+          const aggregateInactive = getAggregateMetric("inactive_recipients");
+          if (aggregateInactive !== null) {
+            cards.push({ label: "Inactive Recipients", value: aggregateInactive });
+            continue;
+          }
+
+          const inactiveCount = safeRows.reduce((sum, row) => {
+            return sum + (isInactiveRecipientStatus(row ? row.recipient_status : null) ? 1 : 0);
+          }, 0);
+          cards.push({ label: "Inactive Recipients", value: inactiveCount });
+          continue;
+        }
+
+        if (key === "missing_contact") {
+          const aggregateMissing = getAggregateMetric("missing_contact");
+          if (aggregateMissing !== null) {
+            cards.push({ label: "Missing Contact", value: aggregateMissing });
+            continue;
+          }
+
+          let missingCount = 0;
+          if (safeRows.length > 0 && typeof safeRows[0] === "object" && safeRows[0] !== null) {
+            const hasEmail = Object.prototype.hasOwnProperty.call(safeRows[0], "email");
+            const hasPhone = Object.prototype.hasOwnProperty.call(safeRows[0], "cellphone");
+            if (hasEmail || hasPhone) {
+              for (const row of safeRows) {
+                const emailMissing = hasEmail ? isBlankContactValue(row ? row.email : null) : true;
+                const phoneMissing = hasPhone ? isBlankContactValue(row ? row.cellphone : null) : true;
+                if (emailMissing || phoneMissing) {
+                  missingCount += 1;
+                }
+              }
+            }
+          }
+          cards.push({ label: "Missing Contact", value: missingCount });
+          continue;
+        }
+
+        if (key === "total_recipients") {
+          const aggregateRecipients = getAggregateMetric("total_recipients");
+          if (aggregateRecipients !== null) {
+            cards.push({ label: "Total Recipients", value: aggregateRecipients });
+            continue;
+          }
+
+          const recipientIds = new Set();
+          for (const row of safeRows) {
+            const recipientId = row && Object.prototype.hasOwnProperty.call(row, "recipient_id")
+              ? String(row.recipient_id || "").trim()
+              : "";
+            if (recipientId) {
+              recipientIds.add(recipientId);
+            }
+          }
+          cards.push({
+            label: "Total Recipients",
+            value: recipientIds.size > 0 ? recipientIds.size : safeRows.length,
+          });
+        }
+      }
+
+      return cards;
+    }
+
+    function computeReportKpisFromRows(rows, requestedTargets = []) {
+      const safeRows = Array.isArray(rows) ? rows : [];
+      const targeted = computeTargetedReportKpis(safeRows, requestedTargets);
+      if (targeted.length > 0) {
+        return targeted;
+      }
+      const kpis = [{ label: "Records", value: safeRows.length }];
+      if (safeRows.length === 0 || typeof safeRows[0] !== "object" || safeRows[0] === null) {
+        return kpis;
+      }
+
+      const columns = Object.keys(safeRows[0] || {});
+      kpis.push({ label: "Columns", value: columns.length });
+
+      const numericColumns = [];
+      const dateColumns = [];
+      const sampleRows = safeRows.slice(0, Math.min(safeRows.length, 50));
+      for (const column of columns) {
+        let numericHits = 0;
+        let numericSeen = 0;
+        let dateHits = 0;
+        let dateSeen = 0;
+        for (const row of sampleRows) {
+          const raw = row && Object.prototype.hasOwnProperty.call(row, column) ? row[column] : null;
+          if (raw === null || raw === undefined || String(raw).trim() === "") {
+            continue;
+          }
+
+          numericSeen += 1;
+          if (parseNumericValue(raw) !== null) {
+            numericHits += 1;
+          }
+
+          dateSeen += 1;
+          if (parseDateToMs(raw) !== null) {
+            dateHits += 1;
+          }
+        }
+
+        if (numericSeen > 0 && numericHits / numericSeen >= 0.7) {
+          numericColumns.push(column);
+        }
+        if (dateSeen > 0 && dateHits / dateSeen >= 0.6) {
+          dateColumns.push(column);
+        }
+      }
+
+      if (numericColumns.length > 0) {
+        const metricCol = numericColumns[0];
+        const values = [];
+        for (const row of safeRows) {
+          const value = parseNumericValue(row ? row[metricCol] : null);
+          if (value !== null) {
+            values.push(value);
+          }
+        }
+        if (values.length > 0) {
+          const total = values.reduce((sum, value) => sum + value, 0);
+          kpis.push({ label: `Sum(${metricCol})`, value: Number(total.toFixed(2)) });
+          kpis.push({ label: `Avg(${metricCol})`, value: Number((total / values.length).toFixed(2)) });
+        }
+      }
+
+      if (dateColumns.length > 0) {
+        const dateCol = dateColumns[0];
+        const dateValues = [];
+        for (const row of safeRows) {
+          const ms = parseDateToMs(row ? row[dateCol] : null);
+          if (ms !== null) {
+            dateValues.push(ms);
+          }
+        }
+        if (dateValues.length > 0) {
+          const minDate = new Date(Math.min(...dateValues));
+          const maxDate = new Date(Math.max(...dateValues));
+          const minText = minDate.toLocaleDateString("en-US");
+          const maxText = maxDate.toLocaleDateString("en-US");
+          kpis.push({ label: `Date Range (${dateCol})`, value: `${minText} to ${maxText}` });
+        }
+      }
+
+      return kpis;
+    }
+
+    function mapKpiLabelToTargetKey(label) {
+      const text = String(label || "").trim().toLowerCase();
+      if (!text) {
+        return "";
+      }
+      if (text.includes("total delivered")) {
+        return "total_delivered";
+      }
+      if (text.includes("active recipient") || text.includes("active user")) {
+        return "active_recipients";
+      }
+      if (text.includes("inactive recipient") || text.includes("inactive user")) {
+        return "inactive_recipients";
+      }
+      if (text.includes("missing contact")) {
+        return "missing_contact";
+      }
+      if (text.includes("total recipient") || text.includes("recipient total")) {
+        return "total_recipients";
+      }
+      return "";
+    }
+
+    function isLikelyKpiReportPayload(reportPayload, userMessage = "") {
+      if (!reportPayload || typeof reportPayload !== "object") {
+        return false;
+      }
+
+      const requestedTargets = normalizeKpiTargetKeys(reportPayload.kpi_targets || []);
+      if (requestedTargets.length > 0) {
+        return true;
+      }
+
+      const kpis = Array.isArray(reportPayload.kpis) ? reportPayload.kpis : [];
+      const hasKnownKpiLabels = kpis.some((item) => mapKpiLabelToTargetKey(item ? item.label : ""));
+      if (hasKnownKpiLabels) {
+        return true;
+      }
+
+      return /\bkpi\b|\bkpis\b|\bkpi\s+card\b|\bkpi\s+cards\b/i.test(String(userMessage || ""));
+    }
+
+    function appendIndividualKpiCardsToBubble(bubble, reportPayload) {
+      if (!bubble || !reportPayload) {
+        return [];
+      }
+
+      const requestedTargets = normalizeKpiTargetKeys(reportPayload.kpi_targets || []);
+      const sourceRows = Array.isArray(reportPayload.rows) ? reportPayload.rows : [];
+      const initialKpis = Array.isArray(reportPayload.kpis) && reportPayload.kpis.length > 0
+        ? reportPayload.kpis
+        : computeReportKpisFromRows(sourceRows, requestedTargets);
+
+      if (!Array.isArray(initialKpis) || initialKpis.length === 0) {
+        return [];
+      }
+
+      const createdCards = [];
+      initialKpis.forEach((kpi, index) => {
+        const wrap = document.createElement("div");
+        wrap.className = "report-wrap kpi-single";
+
+        if (sourceRows.length > 0) {
+          const rowsJson = JSON.stringify(sourceRows);
+          wrap.setAttribute("data-report-rows", rowsJson);
+          wrap.setAttribute("data-original-report-rows", rowsJson);
+        }
+
+        const fallbackKey = mapKpiLabelToTargetKey(kpi ? kpi.label : "");
+        const targetKey = requestedTargets[index] || fallbackKey;
+        if (targetKey) {
+          wrap.setAttribute("data-kpi-targets", JSON.stringify([targetKey]));
+        }
+
+        renderReportKpis(wrap, [kpi]);
+        bubble.appendChild(wrap);
+        createdCards.push(wrap);
+      });
+
+      return createdCards;
+    }
+
+    function renderReportKpis(wrap, kpis) {
+      if (!wrap) {
+        return;
+      }
+
+      const existingGrid = wrap.querySelector(".report-kpis");
+      if (existingGrid) {
+        existingGrid.remove();
+      }
+
+      if (!Array.isArray(kpis) || kpis.length === 0) {
+        return;
+      }
+
+      const kpisGrid = document.createElement("div");
+      kpisGrid.className = "report-kpis";
+
+      for (const item of kpis) {
+        const card = document.createElement("div");
+        card.className = "report-kpi";
+
+        const label = document.createElement("div");
+        label.className = "report-kpi-label";
+        label.textContent = item && item.label ? String(item.label) : "Metric";
+
+        const value = document.createElement("div");
+        value.className = "report-kpi-value";
+        value.textContent = item && item.value !== null && item.value !== undefined ? String(item.value) : "";
+
+        card.appendChild(label);
+        card.appendChild(value);
+        kpisGrid.appendChild(card);
+      }
+
+      wrap.appendChild(kpisGrid);
+    }
+
     function getDashboardDateRange() {
       const fromValue = dashboardDateFrom.value;
       const toValue = dashboardDateTo.value;
@@ -1373,6 +2160,7 @@
       const dateRange = getDashboardDateRange();
       const chartWraps = Array.from(dashboardItems.querySelectorAll(".chart-wrap[data-chart-payload]"));
       const tableWraps = Array.from(dashboardItems.querySelectorAll(".table-wrap"));
+      const reportWraps = Array.from(dashboardItems.querySelectorAll(".report-wrap[data-report-rows]"));
 
       let applicableCount = 0;
       let totalVisiblePoints = 0;
@@ -1380,6 +2168,8 @@
       let backendTotalPackages = 0;
       let tableAppliedCount = 0;
       let tableVisibleRows = 0;
+      let reportAppliedCount = 0;
+      let reportVisibleRows = 0;
 
       for (const chartWrap of chartWraps) {
         const originalPayloadText = chartWrap.getAttribute("data-original-chart-payload") || chartWrap.getAttribute("data-chart-payload") || "";
@@ -1495,14 +2285,58 @@
         renderTableWrap(tableWrap, rowsToRender, preferredColumns);
       }
 
+      for (const reportWrap of reportWraps) {
+        const originalRowsText =
+          reportWrap.getAttribute("data-original-report-rows") ||
+          reportWrap.getAttribute("data-report-rows") ||
+          "";
+        if (!originalRowsText) {
+          continue;
+        }
+
+        if (!reportWrap.getAttribute("data-original-report-rows")) {
+          reportWrap.setAttribute("data-original-report-rows", originalRowsText);
+        }
+
+        let originalRows = null;
+        try {
+          originalRows = JSON.parse(originalRowsText);
+        } catch (error) {
+          continue;
+        }
+
+        if (!Array.isArray(originalRows)) {
+          continue;
+        }
+
+        const reportResult = filterTableRowsByDate(originalRows, dateRange);
+        const rowsToUse = dateRange.active && reportResult.applicable ? reportResult.rows : originalRows;
+        if (dateRange.active && reportResult.applicable) {
+          applicableCount += 1;
+          reportAppliedCount += 1;
+          reportVisibleRows += reportResult.kept;
+        }
+
+        reportWrap.setAttribute("data-report-rows", JSON.stringify(rowsToUse));
+        const rawTargets = reportWrap.getAttribute("data-kpi-targets") || "[]";
+        let requestedTargets = [];
+        try {
+          requestedTargets = JSON.parse(rawTargets);
+        } catch (error) {
+          requestedTargets = [];
+        }
+        const recomputedKpis = computeReportKpisFromRows(rowsToUse, requestedTargets);
+        renderReportKpis(reportWrap, recomputedKpis);
+      }
+
       if (!dateRange.active) {
         setDashboardFilterStatus("Date filter is cleared. Showing all dashboard items.");
       } else if (applicableCount === 0) {
         setDashboardFilterStatus("Date filter applied: no date columns/axes detected in current dashboard items.");
       } else if (backendAppliedCount > 0) {
-        if (tableAppliedCount > 0) {
+        if (tableAppliedCount > 0 || reportAppliedCount > 0) {
           setDashboardFilterStatus(
-            `Date filter applied to ${applicableCount} item(s): ${backendAppliedCount} chart(s), ${tableAppliedCount} table(s). Total delivered packages: ${Math.round(backendTotalPackages)}. Visible table rows: ${tableVisibleRows}.`
+            `Date filter applied to ${applicableCount} item(s): ${backendAppliedCount} chart(s), ${tableAppliedCount} table(s), ${reportAppliedCount} KPI card(s). Total delivered packages: ${Math.round(backendTotalPackages)}. Visible table rows: ${tableVisibleRows}. KPI source rows: ${reportVisibleRows}.`
           );
         } else {
           setDashboardFilterStatus(
@@ -1510,9 +2344,9 @@
           );
         }
       } else {
-        if (tableAppliedCount > 0) {
+        if (tableAppliedCount > 0 || reportAppliedCount > 0) {
           setDashboardFilterStatus(
-            `Date filter applied to ${applicableCount} item(s). Visible points: ${totalVisiblePoints}. Visible table rows: ${tableVisibleRows}.`
+            `Date filter applied to ${applicableCount} item(s). Visible points: ${totalVisiblePoints}. Visible table rows: ${tableVisibleRows}. KPI source rows: ${reportVisibleRows}.`
           );
         } else {
           setDashboardFilterStatus(`Date filter applied to ${applicableCount} chart(s). Visible points: ${totalVisiblePoints}.`);
@@ -1792,11 +2626,19 @@
       });
     }
 
-    function clampCardScale(value) {
-      if (!Number.isFinite(value)) {
-        return DASHBOARD_CARD_SCALE_MIN;
+    function getCardScaleMin(card) {
+      if (card && card.classList && card.classList.contains("floating-kpi")) {
+        return DASHBOARD_KPI_CARD_SCALE_MIN;
       }
-      return Math.max(DASHBOARD_CARD_SCALE_MIN, Math.min(DASHBOARD_CARD_SCALE_MAX, value));
+      return DASHBOARD_CARD_SCALE_MIN;
+    }
+
+    function clampCardScale(card, value) {
+      const minScale = getCardScaleMin(card);
+      if (!Number.isFinite(value)) {
+        return minScale;
+      }
+      return Math.max(minScale, Math.min(DASHBOARD_CARD_SCALE_MAX, value));
     }
 
     function formatCardScaleLabel(scale) {
@@ -1827,7 +2669,8 @@
         return;
       }
 
-      const normalizedScale = clampCardScale(scale);
+      const minScale = getCardScaleMin(card);
+      const normalizedScale = clampCardScale(card, scale);
       card.dataset.scale = String(normalizedScale);
       card.style.setProperty("--card-height", `calc(var(--dashboard-tile-height) * ${normalizedScale})`);
       applyDashboardCardGridSpan(card, normalizedScale);
@@ -1842,13 +2685,13 @@
           sizeLabel.textContent = formatCardScaleLabel(normalizedScale);
         }
         if (decreaseButton) {
-          decreaseButton.disabled = normalizedScale <= DASHBOARD_CARD_SCALE_MIN + 0.001;
+          decreaseButton.disabled = normalizedScale <= minScale + 0.001;
         }
         if (increaseButton) {
           increaseButton.disabled = normalizedScale >= DASHBOARD_CARD_SCALE_MAX - 0.001;
         }
         if (resetButton) {
-          resetButton.disabled = Math.abs(normalizedScale - DASHBOARD_CARD_SCALE_MIN) < 0.001;
+          resetButton.disabled = Math.abs(normalizedScale - DASHBOARD_CARD_SCALE_DEFAULT) < 0.001;
         }
       }
     }
@@ -1883,15 +2726,21 @@
       resetButton.setAttribute("aria-label", "Reset card size to original");
 
       const updateScale = (delta = null, useReset = false) => {
-        const currentScale = Number(card.dataset.scale || DASHBOARD_CARD_SCALE_MIN);
+        if (!dashboardEditable) {
+          return;
+        }
+        const currentScale = Number(card.dataset.scale || DASHBOARD_CARD_SCALE_DEFAULT);
         const nextScale = useReset
-          ? DASHBOARD_CARD_SCALE_MIN
-          : clampCardScale(currentScale + (delta || 0));
+          ? DASHBOARD_CARD_SCALE_DEFAULT
+          : clampCardScale(card, currentScale + (delta || 0));
         if (useReset) {
           card.style.width = "";
           card.style.justifySelf = "";
         }
         applyDashboardCardScale(card, nextScale, controls);
+        if (card.classList.contains("floating-kpi")) {
+          resolveFloatingKpiCollisions(card);
+        }
       };
 
       decreaseButton.addEventListener("click", () => {
@@ -1911,7 +2760,7 @@
       controls.appendChild(increaseButton);
       controls.appendChild(resetButton);
 
-      applyDashboardCardScale(card, DASHBOARD_CARD_SCALE_MIN, controls);
+      applyDashboardCardScale(card, DASHBOARD_CARD_SCALE_DEFAULT, controls);
       return controls;
     }
 
@@ -1973,9 +2822,13 @@
         return DASHBOARD_CARD_WIDTH_MIN_PX;
       }
 
+      const minWidth = card.classList.contains("floating-kpi")
+        ? DASHBOARD_KPI_CARD_WIDTH_MIN_PX
+        : DASHBOARD_CARD_WIDTH_MIN_PX;
+
       const gridContainer = card.parentElement;
-      const maxByContainer = gridContainer ? Math.max(DASHBOARD_CARD_WIDTH_MIN_PX, gridContainer.clientWidth - 6) : 1200;
-      return Math.max(DASHBOARD_CARD_WIDTH_MIN_PX, Math.min(maxByContainer, Math.round(width)));
+      const maxByContainer = gridContainer ? Math.max(minWidth, gridContainer.clientWidth - 6) : 1200;
+      return Math.max(minWidth, Math.min(maxByContainer, Math.round(width)));
     }
 
     function setupDashboardCardBorderResize(card) {
@@ -1994,14 +2847,23 @@
         if (resizeState) {
           const dx = event.clientX - resizeState.startX;
           const dy = event.clientY - resizeState.startY;
+          const isFloatingKpiCard = card.classList.contains("floating-kpi");
           let nextWidth = resizeState.startWidth;
           let nextHeight = resizeState.startHeight;
+          let nextLeft = resizeState.startLeft;
+          let nextTop = resizeState.startTop;
 
           if (resizeState.direction.includes("e")) {
             nextWidth = resizeState.startWidth + dx;
           }
           if (resizeState.direction.includes("w")) {
             nextWidth = resizeState.startWidth - dx;
+            if (isFloatingKpiCard) {
+              const rightEdge = resizeState.startLeft + resizeState.startWidth;
+              const clampedWidth = clampDashboardCardWidth(card, nextWidth);
+              nextLeft = rightEdge - clampedWidth;
+              nextWidth = clampedWidth;
+            }
           }
           if (resizeState.direction.includes("s")) {
             nextHeight = resizeState.startHeight + dy;
@@ -2014,12 +2876,26 @@
             const nextScale = nextHeight / resizeState.baseHeight;
             const controls = card.querySelector(".dashboard-card-size");
             applyDashboardCardScale(card, nextScale, controls);
+            if (isFloatingKpiCard && resizeState.direction.includes("n")) {
+              const bottomEdge = resizeState.startTop + resizeState.startHeight;
+              nextTop = bottomEdge - card.offsetHeight;
+            }
           }
 
           if (resizeState.direction.includes("e") || resizeState.direction.includes("w")) {
-            const clampedWidth = clampDashboardCardWidth(card, nextWidth);
+            const clampedWidth = resizeState.direction.includes("w") && isFloatingKpiCard
+              ? nextWidth
+              : clampDashboardCardWidth(card, nextWidth);
             card.style.width = `${clampedWidth}px`;
             card.style.justifySelf = "start";
+          }
+
+          if (isFloatingKpiCard) {
+            const currentLeft = Number(card.dataset.floatLeft || card.offsetLeft || 0);
+            const currentTop = Number(card.dataset.floatTop || card.offsetTop || 0);
+            const resolvedLeft = resizeState.direction.includes("w") ? nextLeft : currentLeft;
+            const resolvedTop = resizeState.direction.includes("n") ? nextTop : currentTop;
+            setFloatingKpiCardPosition(card, resolvedLeft, resolvedTop);
           }
 
           event.preventDefault();
@@ -2042,6 +2918,9 @@
         card.style.cursor = getCursorForResizeDirection(hoveringDirection);
         window.removeEventListener("mousemove", onMouseMove);
         window.removeEventListener("mouseup", onMouseUp);
+        if (card.classList.contains("floating-kpi")) {
+          resolveFloatingKpiCollisions(card);
+        }
       };
 
       card.addEventListener("mousemove", onMouseMove);
@@ -2057,6 +2936,9 @@
         if (event.button !== 0) {
           return;
         }
+        if (!dashboardEditable) {
+          return;
+        }
 
         const direction = getCardBorderResizeDirection(event, card);
         if (!direction) {
@@ -2064,14 +2946,17 @@
         }
 
         const rect = card.getBoundingClientRect();
-        const currentScale = Number(card.dataset.scale || DASHBOARD_CARD_SCALE_MIN);
-        const baseHeight = rect.height / (currentScale > 0 ? currentScale : DASHBOARD_CARD_SCALE_MIN);
+        const minScale = getCardScaleMin(card);
+        const currentScale = Number(card.dataset.scale || DASHBOARD_CARD_SCALE_DEFAULT);
+        const baseHeight = rect.height / (currentScale > 0 ? currentScale : minScale);
         resizeState = {
           direction,
           startX: event.clientX,
           startY: event.clientY,
           startWidth: rect.width,
           startHeight: rect.height,
+          startLeft: Number(card.dataset.floatLeft || card.offsetLeft || 0),
+          startTop: Number(card.dataset.floatTop || card.offsetTop || 0),
           baseHeight,
         };
 
@@ -2084,10 +2969,257 @@
       });
     }
 
-    function addDashboardCard(label, contentHtml, sourceId = "") {
+    function isKpiDashboardCard(label, body) {
+      const labelText = String(label || "").trim().toLowerCase();
+      if (labelText.includes("kpi")) {
+        return true;
+      }
+      if (!body) {
+        return false;
+      }
+      return Boolean(body.querySelector(".report-wrap.kpi-single"));
+    }
+
+    function clampFloatingKpiPosition(card, left, top) {
+      if (!card || !dashboardItems) {
+        return { left: 0, top: 0 };
+      }
+
+      const maxLeft = Math.max(0, dashboardItems.clientWidth - card.offsetWidth - 4);
+      const maxTop = Math.max(0, dashboardItems.clientHeight - card.offsetHeight - 4);
+      const clampedLeft = Math.max(0, Math.min(maxLeft, Math.round(left)));
+      const clampedTop = Math.max(0, Math.min(maxTop, Math.round(top)));
+      return { left: clampedLeft, top: clampedTop };
+    }
+
+    function rectsOverlap(a, b) {
+      if (!a || !b) {
+        return false;
+      }
+      return (
+        a.left < b.left + b.width &&
+        a.left + a.width > b.left &&
+        a.top < b.top + b.height &&
+        a.top + a.height > b.top
+      );
+    }
+
+    function getDashboardObstacleRects(excludeCard = null) {
+      if (!dashboardItems) {
+        return [];
+      }
+
+      const obstacles = [];
+      const cards = dashboardItems.querySelectorAll(".dashboard-card");
+      cards.forEach((entry) => {
+        if (!entry || entry === excludeCard) {
+          return;
+        }
+        const width = entry.offsetWidth;
+        const height = entry.offsetHeight;
+        if (width <= 0 || height <= 0) {
+          return;
+        }
+        const gap = 6;
+        obstacles.push({
+          left: entry.offsetLeft - gap,
+          top: entry.offsetTop - gap,
+          width: width + (gap * 2),
+          height: height + (gap * 2),
+        });
+      });
+
+      return obstacles;
+    }
+
+    function findNearestFloatingKpiFreePosition(card, left, top) {
+      const base = clampFloatingKpiPosition(card, left, top);
+      const obstacles = getDashboardObstacleRects(card);
+      const cardWidth = card ? card.offsetWidth : 0;
+      const cardHeight = card ? card.offsetHeight : 0;
+      const isOverlapping = (candidate) => {
+        const probe = {
+          left: candidate.left,
+          top: candidate.top,
+          width: cardWidth,
+          height: cardHeight,
+        };
+        return obstacles.some((obstacle) => rectsOverlap(probe, obstacle));
+      };
+
+      if (!isOverlapping(base)) {
+        return base;
+      }
+
+      let candidate = { ...base };
+      const maxIterations = 220;
+      for (let i = 0; i < maxIterations; i += 1) {
+        const probe = {
+          left: candidate.left,
+          top: candidate.top,
+          width: cardWidth,
+          height: cardHeight,
+        };
+        const blocker = obstacles.find((obstacle) => rectsOverlap(probe, obstacle));
+        if (!blocker) {
+          return candidate;
+        }
+
+        const rightCandidate = clampFloatingKpiPosition(
+          card,
+          blocker.left + blocker.width + 8,
+          candidate.top
+        );
+        if (rightCandidate.left > candidate.left) {
+          candidate = rightCandidate;
+          continue;
+        }
+
+        candidate = clampFloatingKpiPosition(card, 8, blocker.top + blocker.height + 8);
+      }
+
+      return candidate;
+    }
+
+    function setFloatingKpiCardPosition(card, left, top) {
+      if (!card) {
+        return;
+      }
+      const next = findNearestFloatingKpiFreePosition(card, left, top);
+      card.style.left = `${next.left}px`;
+      card.style.top = `${next.top}px`;
+      card.dataset.floatLeft = String(next.left);
+      card.dataset.floatTop = String(next.top);
+    }
+
+    function resolveFloatingKpiCollisions(preferredCard = null) {
+      if (!dashboardItems) {
+        return;
+      }
+
+      const cards = Array.from(dashboardItems.querySelectorAll(".dashboard-card.floating-kpi"));
+      if (cards.length <= 1) {
+        return;
+      }
+
+      const ordered = preferredCard
+        ? [preferredCard, ...cards.filter((entry) => entry !== preferredCard)]
+        : cards;
+
+      for (const entry of ordered) {
+        const left = Number(entry.dataset.floatLeft || entry.offsetLeft || 0);
+        const top = Number(entry.dataset.floatTop || entry.offsetTop || 0);
+        setFloatingKpiCardPosition(entry, left, top);
+      }
+    }
+
+    function getDefaultFloatingKpiCardPosition(card) {
+      const existingCount = dashboardItems.querySelectorAll(".dashboard-card.floating-kpi").length;
+      const column = existingCount % 3;
+      const row = Math.floor(existingCount / 3);
+      return {
+        left: 12 + column * 26,
+        top: 12 + row * 26,
+      };
+    }
+
+    function setupFloatingKpiCardDrag(card) {
+      if (!card || card.dataset.floatingDragReady === "1") {
+        return;
+      }
+
+      const head = card.querySelector(".dashboard-card-head");
+      if (!head) {
+        return;
+      }
+
+      card.dataset.floatingDragReady = "1";
+      let dragState = null;
+
+      const onMouseMove = (event) => {
+        if (!dragState) {
+          return;
+        }
+
+        const nextLeft = dragState.startLeft + (event.clientX - dragState.startX);
+        const nextTop = dragState.startTop + (event.clientY - dragState.startY);
+        setFloatingKpiCardPosition(card, nextLeft, nextTop);
+        event.preventDefault();
+      };
+
+      const onMouseUp = () => {
+        if (!dragState) {
+          return;
+        }
+        dragState = null;
+        document.body.style.userSelect = "";
+        window.removeEventListener("mousemove", onMouseMove);
+        window.removeEventListener("mouseup", onMouseUp);
+        resolveFloatingKpiCollisions(card);
+      };
+
+      head.addEventListener("mousedown", (event) => {
+        if (event.button !== 0) {
+          return;
+        }
+        if (!dashboardEditable) {
+          return;
+        }
+        if (event.target.closest(".dashboard-card-actions")) {
+          return;
+        }
+
+        const currentLeft = Number(card.dataset.floatLeft || card.offsetLeft || 0);
+        const currentTop = Number(card.dataset.floatTop || card.offsetTop || 0);
+        floatingKpiZCounter += 1;
+        card.style.zIndex = String(floatingKpiZCounter);
+        dragState = {
+          startX: event.clientX,
+          startY: event.clientY,
+          startLeft: Number.isFinite(currentLeft) ? currentLeft : 0,
+          startTop: Number.isFinite(currentTop) ? currentTop : 0,
+        };
+
+        document.body.style.userSelect = "none";
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+        event.preventDefault();
+      });
+    }
+
+    function applyFloatingKpiCardLayout(card, dropClientX = null, dropClientY = null) {
+      if (!card) {
+        return;
+      }
+
+      card.classList.add("floating-kpi");
+      floatingKpiZCounter += 1;
+      card.style.zIndex = String(floatingKpiZCounter);
+
+      let initialLeft = 0;
+      let initialTop = 0;
+      if (Number.isFinite(dropClientX) && Number.isFinite(dropClientY)) {
+        const rect = dashboardItems.getBoundingClientRect();
+        initialLeft = dropClientX - rect.left - (card.offsetWidth / 2);
+        initialTop = dropClientY - rect.top - 18;
+      } else {
+        const fallback = getDefaultFloatingKpiCardPosition(card);
+        initialLeft = fallback.left;
+        initialTop = fallback.top;
+      }
+
+      setFloatingKpiCardPosition(card, initialLeft, initialTop);
+      setupFloatingKpiCardDrag(card);
+      resolveFloatingKpiCollisions(card);
+    }
+
+    function addDashboardCard(label, contentHtml, sourceId = "", dropClientX = null, dropClientY = null, options = null) {
       if (!contentHtml) {
         return false;
       }
+
+      const addOptions = options && typeof options === "object" ? options : {};
+      const allowDuplicate = Boolean(addOptions.allowDuplicate);
 
       const normalizedSourceId = String(sourceId || "").trim();
       if (normalizedSourceId && dashboardPinnedSources.has(normalizedSourceId)) {
@@ -2095,13 +3227,14 @@
       }
 
       const signature = makeDashboardSignature(label, contentHtml);
-      if (dashboardItemSignatures.has(signature)) {
+      if (!allowDuplicate && dashboardItemSignatures.has(signature)) {
         return false;
       }
 
       const card = document.createElement("article");
       card.className = "dashboard-card";
       card.dataset.signature = signature;
+      card.dataset.cardLabel = String(label || "");
 
       const head = document.createElement("div");
       head.className = "dashboard-card-head";
@@ -2114,6 +3247,9 @@
       removeButton.className = "dashboard-remove";
       removeButton.textContent = "Remove";
       removeButton.addEventListener("click", () => {
+        if (!dashboardEditable) {
+          return;
+        }
         const cardSignature = card.dataset.signature || "";
         if (cardSignature) {
           dashboardItemSignatures.delete(cardSignature);
@@ -2130,30 +3266,66 @@
       body.className = "dashboard-card-body";
       body.innerHTML = contentHtml;
       hydrateDashboardCharts(body);
+      const floatingKpiMode = Boolean(addOptions.forceFloating) || isKpiDashboardCard(label, body);
 
-      head.appendChild(title);
+      if (!floatingKpiMode) {
+        head.appendChild(title);
+      }
 
       const actions = document.createElement("div");
       actions.className = "dashboard-card-actions";
-      if (body.querySelector(".chart-wrap") || body.querySelector(".table-wrap")) {
-        actions.appendChild(buildDashboardCardSizeControls(card));
+      let sizeControls = null;
+      if (body.querySelector(".chart-wrap") || body.querySelector(".table-wrap") || body.querySelector(".report-wrap")) {
+        sizeControls = buildDashboardCardSizeControls(card);
+        actions.appendChild(sizeControls);
       }
       actions.appendChild(removeButton);
       head.appendChild(actions);
 
       card.appendChild(head);
       card.appendChild(body);
-      if (body.querySelector(".chart-wrap") || body.querySelector(".table-wrap")) {
+      if (body.querySelector(".chart-wrap") || body.querySelector(".table-wrap") || body.querySelector(".report-wrap")) {
         setupDashboardCardBorderResize(card);
       }
       dashboardItems.appendChild(card);
+
+      if (floatingKpiMode) {
+        applyFloatingKpiCardLayout(card, dropClientX, dropClientY);
+      }
+
+      if (sizeControls && Number.isFinite(Number(addOptions.restoreScale))) {
+        applyDashboardCardScale(card, Number(addOptions.restoreScale), sizeControls);
+      }
+      if (typeof addOptions.restoreWidth === "string" && addOptions.restoreWidth.trim()) {
+        card.style.width = addOptions.restoreWidth.trim();
+      }
+      if (typeof addOptions.restoreJustifySelf === "string" && addOptions.restoreJustifySelf.trim()) {
+        card.style.justifySelf = addOptions.restoreJustifySelf.trim();
+      }
+      if (
+        floatingKpiMode
+        && Number.isFinite(Number(addOptions.restoreLeft))
+        && Number.isFinite(Number(addOptions.restoreTop))
+      ) {
+        setFloatingKpiCardPosition(card, Number(addOptions.restoreLeft), Number(addOptions.restoreTop));
+      }
+      if (floatingKpiMode && Number.isFinite(Number(addOptions.restoreZIndex))) {
+        const restoredZ = Number(addOptions.restoreZIndex);
+        card.style.zIndex = String(restoredZ);
+        floatingKpiZCounter = Math.max(floatingKpiZCounter, restoredZ);
+      }
+
       dashboardItemSignatures.add(signature);
       if (normalizedSourceId) {
         card.dataset.sourceId = normalizedSourceId;
         dashboardPinnedSources.add(normalizedSourceId);
         lockDashboardSource(normalizedSourceId);
       }
-      void applyDashboardDateFilter();
+
+      if (!allowDuplicate) {
+        void applyDashboardDateFilter();
+      }
+      setDashboardEditMode(dashboardEditable);
       return true;
     }
 
@@ -2179,12 +3351,12 @@
         return;
       }
 
-      source.setAttribute("draggable", "true");
+      source.setAttribute("draggable", dashboardEditable ? "true" : "false");
       source.classList.add("dashboard-source");
 
       const actionButton = source.nextElementSibling?.querySelector(".add-dashboard-btn");
       if (actionButton) {
-        actionButton.disabled = false;
+        actionButton.disabled = !dashboardEditable;
         actionButton.textContent = "Add to Dashboard";
       }
     }
@@ -2198,8 +3370,12 @@
       resultElement.dataset.dashboardSourceId = sourceId;
 
       resultElement.classList.add("dashboard-source");
-      resultElement.setAttribute("draggable", "true");
+      resultElement.setAttribute("draggable", dashboardEditable ? "true" : "false");
       resultElement.addEventListener("dragstart", (event) => {
+        if (!dashboardEditable) {
+          event.preventDefault();
+          return;
+        }
         if (dashboardPinnedSources.has(sourceId)) {
           event.preventDefault();
           return;
@@ -2223,7 +3399,12 @@
       addButton.type = "button";
       addButton.className = "add-dashboard-btn";
       addButton.textContent = "Add to Dashboard";
+      addButton.disabled = !dashboardEditable;
       addButton.addEventListener("click", () => {
+        if (!dashboardEditable) {
+          setDashboardSaveStatus("Dashboard is locked. Click Edit to modify.");
+          return;
+        }
         if (dashboardPinnedSources.has(sourceId)) {
           addButton.textContent = "Added";
           return;
@@ -2242,6 +3423,7 @@
       actions.appendChild(hint);
       actions.appendChild(addButton);
       resultElement.insertAdjacentElement("afterend", actions);
+      refreshDashboardSourceInteractivity();
     }
 
     function setupDashboardDropZone() {
@@ -2252,6 +3434,9 @@
 
       const enter = (event) => {
         preventDefaults(event);
+        if (!dashboardEditable) {
+          return;
+        }
         dashboardPanel.classList.add("drag-over");
       };
 
@@ -2263,11 +3448,15 @@
       const drop = (event) => {
         preventDefaults(event);
         dashboardPanel.classList.remove("drag-over");
+        if (!dashboardEditable) {
+          setDashboardSaveStatus("Dashboard is locked. Click Edit to modify.");
+          return;
+        }
         const contentHtml = event.dataTransfer.getData("text/html");
         const label = event.dataTransfer.getData("text/plain") || "Saved result";
         const sourceId = event.dataTransfer.getData("application/x-dashboard-source-id") || "";
         if (contentHtml) {
-          addDashboardCard(label, contentHtml, sourceId);
+          addDashboardCard(label, contentHtml, sourceId, event.clientX, event.clientY);
         }
       };
 
@@ -2305,6 +3494,156 @@
       });
     }
 
+    function collectDashboardState() {
+      const items = [];
+      const cards = dashboardItems.querySelectorAll(".dashboard-card");
+      cards.forEach((card) => {
+        const label = card.querySelector(".dashboard-card-head span")?.textContent?.trim()
+          || card.dataset.cardLabel
+          || "Saved result";
+        const body = card.querySelector(".dashboard-card-body");
+        if (!body) {
+          return;
+        }
+
+        items.push({
+          label,
+          content_html: body.innerHTML,
+          scale: Number(card.dataset.scale || DASHBOARD_CARD_SCALE_DEFAULT),
+          width: card.style.width || "",
+          justify_self: card.style.justifySelf || "",
+          is_floating: card.classList.contains("floating-kpi"),
+          float_left: Number(card.dataset.floatLeft || card.offsetLeft || 0),
+          float_top: Number(card.dataset.floatTop || card.offsetTop || 0),
+          z_index: Number(card.style.zIndex || 0),
+        });
+      });
+
+      return {
+        items,
+        from_date: dashboardDateFrom.value || "",
+        to_date: dashboardDateTo.value || "",
+        locked: !dashboardEditable,
+      };
+    }
+
+    function restoreDashboardFromState(state) {
+      const safeState = state && typeof state === "object" ? state : {};
+      const rawItems = Array.isArray(safeState.items) ? safeState.items : [];
+
+      dashboardItems.innerHTML = "";
+      dashboardItemSignatures.clear();
+
+      for (const item of rawItems) {
+        if (!item || typeof item !== "object") {
+          continue;
+        }
+        const label = String(item.label || "Saved result");
+        const contentHtml = String(item.content_html || "");
+        if (!contentHtml) {
+          continue;
+        }
+        addDashboardCard(
+          label,
+          contentHtml,
+          "",
+          null,
+          null,
+          {
+            allowDuplicate: true,
+            forceFloating: Boolean(item.is_floating),
+            restoreScale: Number(item.scale),
+            restoreWidth: String(item.width || ""),
+            restoreJustifySelf: String(item.justify_self || ""),
+            restoreLeft: Number(item.float_left),
+            restoreTop: Number(item.float_top),
+            restoreZIndex: Number(item.z_index),
+          }
+        );
+      }
+
+      dashboardDateFrom.value = String(safeState.from_date || "");
+      dashboardDateTo.value = String(safeState.to_date || "");
+      void applyDashboardDateFilter();
+      const locked = Boolean(safeState.locked);
+      setDashboardEditMode(!locked);
+      if (rawItems.length > 0) {
+        setDashboardSaveStatus(`Loaded ${rawItems.length} saved dashboard item(s).`);
+      }
+    }
+
+    async function saveDashboardStateToServer() {
+      if (!dashboardAccountId) {
+        setDashboardSaveStatus("Unable to save dashboard: missing account context.", true);
+        return;
+      }
+
+      const state = collectDashboardState();
+      state.locked = true;
+      const response = await fetch("/chatbot/dashboard/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state }),
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.status !== "ok") {
+        throw new Error(payload.error || "Dashboard save failed.");
+      }
+
+      setDashboardEditMode(false);
+      const savedAt = payload?.state?.saved_at ? String(payload.state.saved_at) : "";
+      setDashboardSaveStatus(savedAt ? `Saved at ${savedAt}` : "Dashboard saved.");
+    }
+
+    async function loadDashboardStateFromServer() {
+      if (!dashboardAccountId) {
+        return;
+      }
+
+      try {
+        const response = await fetch("/chatbot/dashboard/state", { method: "GET" });
+        const payload = await response.json();
+        if (!response.ok || payload.status !== "ok") {
+          setDashboardEditMode(true);
+          setDashboardSaveStatus("Unable to load saved dashboard.", true);
+          return;
+        }
+
+        const state = payload.state;
+        if (state && typeof state === "object" && Array.isArray(state.items) && state.items.length > 0) {
+          restoreDashboardFromState(state);
+        } else {
+          setDashboardEditMode(true);
+          setDashboardSaveStatus("No saved dashboard for this account.");
+          void applyDashboardDateFilter();
+        }
+      } catch (error) {
+        setDashboardEditMode(true);
+        setDashboardSaveStatus("Unable to load saved dashboard.", true);
+        void applyDashboardDateFilter();
+      }
+    }
+
+    function setupDashboardModeControls() {
+      dashboardSaveBtn.addEventListener("click", async () => {
+        if (!dashboardEditable) {
+          setDashboardSaveStatus("Dashboard is already locked. Click Edit to modify.");
+          return;
+        }
+        try {
+          dashboardSaveBtn.disabled = true;
+          await saveDashboardStateToServer();
+        } catch (error) {
+          setDashboardSaveStatus(String(error?.message || "Dashboard save failed."), true);
+          dashboardSaveBtn.disabled = false;
+        }
+      });
+
+      dashboardEditBtn.addEventListener("click", () => {
+        setDashboardEditMode(true);
+      });
+    }
+
     function appendTableToBubble(bubble, rows) {
       if (!bubble || !Array.isArray(rows) || rows.length === 0) {
         return null;
@@ -2324,6 +3663,19 @@
       renderTableWrap(wrap, rows, columns);
       bubble.appendChild(wrap);
       return wrap;
+    }
+
+    function getKpiDashboardLabel(kpiElement) {
+      if (!kpiElement) {
+        return "KPI";
+      }
+
+      const metricLabel = kpiElement.querySelector(".report-kpi-label")?.textContent?.trim();
+      if (metricLabel) {
+        return metricLabel;
+      }
+
+      return "KPI";
     }
 
     function appendMultiTableToBubble(bubble, tableGroups) {
@@ -2512,29 +3864,22 @@
       meta.textContent = `Generated: ${generatedAt}${mode ? ` | Mode: ${mode}` : ""}`;
       wrap.appendChild(meta);
 
-      if (Array.isArray(reportPayload.kpis) && reportPayload.kpis.length > 0) {
-        const kpisGrid = document.createElement("div");
-        kpisGrid.className = "report-kpis";
-
-        for (const item of reportPayload.kpis) {
-          const card = document.createElement("div");
-          card.className = "report-kpi";
-
-          const label = document.createElement("div");
-          label.className = "report-kpi-label";
-          label.textContent = item.label || "Metric";
-
-          const value = document.createElement("div");
-          value.className = "report-kpi-value";
-          value.textContent = item.value === null || item.value === undefined ? "" : String(item.value);
-
-          card.appendChild(label);
-          card.appendChild(value);
-          kpisGrid.appendChild(card);
-        }
-
-        wrap.appendChild(kpisGrid);
+      if (Array.isArray(reportPayload.rows)) {
+        const rowsJson = JSON.stringify(reportPayload.rows);
+        wrap.setAttribute("data-report-rows", rowsJson);
+        wrap.setAttribute("data-original-report-rows", rowsJson);
       }
+      if (Array.isArray(reportPayload.kpi_targets)) {
+        wrap.setAttribute("data-kpi-targets", JSON.stringify(reportPayload.kpi_targets));
+      }
+
+      const initialKpis = Array.isArray(reportPayload.kpis) && reportPayload.kpis.length > 0
+        ? reportPayload.kpis
+        : computeReportKpisFromRows(
+            Array.isArray(reportPayload.rows) ? reportPayload.rows : [],
+            Array.isArray(reportPayload.kpi_targets) ? reportPayload.kpi_targets : []
+          );
+      renderReportKpis(wrap, initialKpis);
 
       bubble.appendChild(wrap);
       return wrap;
@@ -2543,12 +3888,32 @@
     setupDashboardDropZone();
     setupDashboardWheelAssist();
     setupDashboardDateFilter();
+    setupDashboardModeControls();
+
+    document.body.classList.add("dashboard-first");
+
+    if (chatFab) {
+      chatFab.addEventListener("click", () => {
+        openChatPanel();
+      });
+    }
+    if (chatCloseBtn) {
+      chatCloseBtn.addEventListener("click", () => {
+        closeChatPanel();
+      });
+    }
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && document.body.classList.contains("chat-open")) {
+        closeChatPanel();
+      }
+    });
 
     const todayIso = new Date().toISOString().slice(0, 10);
     dashboardDateFrom.setAttribute("max", todayIso);
     dashboardDateTo.setAttribute("max", todayIso);
 
-    void applyDashboardDateFilter();
+    setDashboardEditMode(true);
+    void loadDashboardStateFromServer();
 
     chatForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -2578,21 +3943,33 @@
           appendMessage("bot", data.answer || data.error || "Request failed.", uiMeta);
         } else {
           const bubble = appendMessage("bot", data.answer, uiMeta);
+          let renderedKpiCardsOnly = false;
+
           if (data.report) {
-            const reportElement = appendReportToBubble(bubble, data.report);
-            wireResultToDashboard(reportElement, "Report");
+            if (isLikelyKpiReportPayload(data.report, message)) {
+              const kpiElements = appendIndividualKpiCardsToBubble(bubble, data.report);
+              for (const kpiElement of kpiElements) {
+                wireResultToDashboard(kpiElement, getKpiDashboardLabel(kpiElement));
+              }
+              renderedKpiCardsOnly = kpiElements.length > 0;
+            } else {
+              const reportElement = appendReportToBubble(bubble, data.report);
+              wireResultToDashboard(reportElement, "Report");
+            }
           }
-          if ((data.display === "chart" || data.display === "multi_table_chart") && data.chart) {
+
+          if (!renderedKpiCardsOnly && (data.display === "chart" || data.display === "multi_table_chart") && data.chart) {
             const chartElement = appendChartToBubble(bubble, data.chart);
             wireResultToDashboard(chartElement, "Chart");
           }
-          if ((data.display === "multi_table" || data.display === "multi_table_chart") && Array.isArray(data.table_groups) && data.table_groups.length > 0) {
+
+          if (!renderedKpiCardsOnly && (data.display === "multi_table" || data.display === "multi_table_chart") && Array.isArray(data.table_groups) && data.table_groups.length > 0) {
             const multiTableElement = appendMultiTableToBubble(bubble, data.table_groups);
             wireResultToDashboard(multiTableElement, "Table");
-          } else if (data.display === "table" && Array.isArray(data.rows) && data.rows.length > 0) {
+          } else if (!renderedKpiCardsOnly && data.display === "table" && Array.isArray(data.rows) && data.rows.length > 0) {
             const tableElement = appendTableToBubble(bubble, data.rows);
             wireResultToDashboard(tableElement, "Table");
-          } else if (data.display === "key_value" && Array.isArray(data.rows) && data.rows.length > 0) {
+          } else if (!renderedKpiCardsOnly && data.display === "key_value" && Array.isArray(data.rows) && data.rows.length > 0) {
             const keyValueElement = appendKeyValueToBubble(bubble, data.rows);
             wireResultToDashboard(keyValueElement, "Details");
           }

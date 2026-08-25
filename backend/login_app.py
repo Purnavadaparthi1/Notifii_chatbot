@@ -126,6 +126,88 @@ SQL_TABLE_WRITE_RETRY_DELAY_S = max(
 )
 SQL_TABLE_RESET_DAYS = max(1, int(os.getenv("CHATBOT_SQL_TABLE_RESET_DAYS", "7")))
 
+DASHBOARD_STATE_PATH = Path(__file__).resolve().parent / "dashboard_state.json"
+DASHBOARD_STATE_LOCK = threading.Lock()
+DASHBOARD_MAX_ITEMS = max(1, int(os.getenv("CHATBOT_DASHBOARD_MAX_ITEMS", "120")))
+DASHBOARD_MAX_BODY_CHARS = max(2000, int(os.getenv("CHATBOT_DASHBOARD_MAX_BODY_CHARS", "200000")))
+
+
+def _read_dashboard_state_store():
+    """Read persisted dashboard state map from disk."""
+    try:
+        if not DASHBOARD_STATE_PATH.exists():
+            return {}
+        raw_text = DASHBOARD_STATE_PATH.read_text(encoding="utf-8").strip()
+        if not raw_text:
+            return {}
+        data = json.loads(raw_text)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError) as error:
+        logger.warning("Unable to read dashboard state file %s: %s", DASHBOARD_STATE_PATH, error)
+        return {}
+
+
+def _write_dashboard_state_store(store):
+    """Persist dashboard state map to disk atomically."""
+    if not isinstance(store, dict):
+        store = {}
+
+    try:
+        DASHBOARD_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = DASHBOARD_STATE_PATH.with_suffix(".json.tmp")
+        temp_path.write_text(json.dumps(store, ensure_ascii=True), encoding="utf-8")
+        temp_path.replace(DASHBOARD_STATE_PATH)
+        return True
+    except OSError as error:
+        logger.warning("Unable to write dashboard state file %s: %s", DASHBOARD_STATE_PATH, error)
+        return False
+
+
+def _normalize_dashboard_state_payload(state_payload):
+    """Normalize and bound dashboard state payload for safe persistence."""
+    if not isinstance(state_payload, dict):
+        state_payload = {}
+
+    raw_items = state_payload.get("items")
+    if not isinstance(raw_items, list):
+        raw_items = []
+
+    items = []
+    for raw_item in raw_items[:DASHBOARD_MAX_ITEMS]:
+        if not isinstance(raw_item, dict):
+            continue
+
+        label = str(raw_item.get("label", "") or "").strip()[:120]
+        content_html = str(raw_item.get("content_html", "") or "")
+        if not content_html:
+            continue
+        content_html = content_html[:DASHBOARD_MAX_BODY_CHARS]
+
+        item = {
+            "label": label or "Saved result",
+            "content_html": content_html,
+            "scale": raw_item.get("scale"),
+            "width": str(raw_item.get("width", "") or "")[:40],
+            "justify_self": str(raw_item.get("justify_self", "") or "")[:40],
+            "is_floating": bool(raw_item.get("is_floating")),
+            "float_left": raw_item.get("float_left"),
+            "float_top": raw_item.get("float_top"),
+            "z_index": raw_item.get("z_index"),
+        }
+        items.append(item)
+
+    from_date = _normalize_iso_date(state_payload.get("from_date")) or ""
+    to_date = _normalize_iso_date(state_payload.get("to_date")) or ""
+    locked = bool(state_payload.get("locked"))
+
+    return {
+        "items": items,
+        "from_date": from_date,
+        "to_date": to_date,
+        "locked": locked,
+        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
 
 def _read_sql_table_last_reset_epoch():
     """Return last reset epoch seconds from marker file, if available."""
@@ -986,6 +1068,10 @@ DEFAULT_REPORT_MODE_PATTERNS = [
     r"\bweekly report\b",
     r"\bmonthly report\b",
     r"\bdashboard report\b",
+    r"\bkpi\b",
+    r"\bkpis\b",
+    r"\bkpi card\b",
+    r"\bkpi cards\b",
 ]
 DEFAULT_CHART_FOLLOWUP_PATTERNS = [
     r"\bchart\b",
@@ -7014,10 +7100,252 @@ def _build_report_title(user_query):
     return f"Report: {cleaned}"
 
 
-def _build_report_kpis(rows):
+def detect_requested_kpi_target_keys(user_query):
+    """Extract explicitly requested KPI metric targets from user prompt."""
+    text = normalize_intent_text(user_query)
+    if not text:
+        return []
+
+    recipient_like = r"(?:recipient(?:s)?|recipent(?:s)?|recepient(?:s)?|member(?:s)?|user(?:s)?|usr(?:s)?|people|resident(?:s)?)"
+    contact_like = r"(?:contact|contacts|contact\s+info|contact\s+details|email|emails|mail|phone|phones|cell|cellphone|mobile)"
+
+    target_patterns = [
+        (
+            "total_delivered",
+            (
+                r"\btotal\s+delivered\b",
+                r"\bdelivered\s+total\b",
+                r"\btotal\s+delivered\s+packages\b",
+                r"\bdelivered\s+packages\b",
+                r"\bdelivery\s+total\b",
+                r"\btotal\s+delivery\b",
+                r"\b(?:delivered|delivery)\s+(?:count|counts|volume|summary)\b",
+                r"\bcount\s+of\s+(?:delivered|delivery)\b",
+                r"\bpackages?\s+(?:delivered|delivery)\s+(?:total|count)\b",
+            ),
+        ),
+        (
+            "active_recipients",
+            (
+                r"\bactive\s+recipient\b",
+                r"\bactive\s+recipients\b",
+                r"\bactive\s+member\b",
+                r"\bactive\s+members\b",
+                rf"\bactive\s+{recipient_like}\b",
+                rf"\b{recipient_like}\s+active\b",
+                r"\bworking\s+(?:users|user|recipients|recipient|members|member)\b",
+            ),
+        ),
+        (
+            "inactive_recipients",
+            (
+                r"\binactive\s+recipient\b",
+                r"\binactive\s+recipients\b",
+                r"\binactive\s+member\b",
+                r"\binactive\s+members\b",
+                rf"\binactive\s+{recipient_like}\b",
+                rf"\b{recipient_like}\s+inactive\b",
+                r"\bnon\s*active\s+(?:users|user|recipients|recipient|members|member)\b",
+                r"\bnot\s+active\s+(?:users|user|recipients|recipient|members|member)\b",
+                r"\bdisabled\s+(?:users|user|recipients|recipient|members|member)\b",
+            ),
+        ),
+        (
+            "missing_contact",
+            (
+                r"\bmissing\s+contact\b",
+                r"\bwithout\s+contact\b",
+                r"\bno\s+contact\b",
+                r"\bmissing\s+email\b",
+                r"\bmissing\s+phone\b",
+                r"\bno\s+email\b",
+                r"\bno\s+phone\b",
+                r"\bno\s+cell\b",
+                r"\bno\s+cellphone\b",
+                rf"\b{contact_like}\s+missing\b",
+                rf"\b{contact_like}\s+(?:is\s+)?(?:empty|null|blank|na)\b",
+                rf"\bmissing\s+{contact_like}\b",
+                rf"\bwithout\s+{contact_like}\b",
+                rf"\bno\s+{contact_like}\b",
+                rf"\b{contact_like}\s+not\s+available\b",
+            ),
+        ),
+        (
+            "total_recipients",
+            (
+                r"\btotal\s+recipient\b",
+                r"\btotal\s+recipients\b",
+                r"\brecipient\s+count\b",
+                r"\brecipients\s+count\b",
+                rf"\btotal\s+{recipient_like}\b",
+                rf"\b{recipient_like}\s+count\b",
+                rf"\bcount\s+of\s+{recipient_like}\b",
+            ),
+        ),
+    ]
+
+    requested = []
+    for target_key, patterns in target_patterns:
+        if any(re.search(pattern, text) for pattern in patterns):
+            requested.append(target_key)
+
+    seen = set()
+    ordered = []
+    for item in requested:
+        if item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+
+def _is_blank_contact_value(value):
+    text = str(value or "").strip().lower()
+    return text in ("", "null", "none", "nan")
+
+
+def _is_active_recipient_status(value):
+    if value is None:
+        return False
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return False
+
+    active_terms = {"active", "enabled", "working", "currently working"}
+    if normalized in active_terms:
+        return True
+
+    if re.fullmatch(r"\d+", normalized):
+        try:
+            return int(normalized) in {1}
+        except ValueError:
+            return False
+    return False
+
+
+def _is_inactive_recipient_status(value):
+    if value is None:
+        return False
+    normalized = str(value).strip().lower()
+    if not normalized:
+        return False
+
+    inactive_terms = {"inactive", "disabled", "deactivated", "not working", "non working", "not active"}
+    if normalized in inactive_terms:
+        return True
+
+    if re.fullmatch(r"\d+", normalized):
+        try:
+            return int(normalized) in {0}
+        except ValueError:
+            return False
+    return False
+
+
+def _build_targeted_kpi_cards(rows, target_keys):
+    """Compute explicitly requested KPI cards from current report rows."""
+    if not isinstance(rows, list):
+        rows = []
+
+    cards = []
+    for target_key in target_keys:
+        first_row = rows[0] if rows and isinstance(rows[0], dict) else {}
+
+        if target_key == "total_delivered":
+            delivered_count = 0
+            direct_value = _try_parse_float(first_row.get("total_delivered")) if first_row else None
+            if direct_value is not None:
+                delivered_count = int(round(direct_value))
+            elif rows and isinstance(rows[0], dict):
+                if "date_received" in rows[0]:
+                    delivered_count = sum(
+                        1
+                        for row in rows
+                        if not _is_blank_contact_value(row.get("date_received"))
+                        and str(row.get("date_received")).strip() not in ("0000-00-00", "0000-00-00 00:00:00")
+                    )
+                elif "package_count" in rows[0]:
+                    delivered_count = 0
+                    for row in rows:
+                        value = _try_parse_float(row.get("package_count"))
+                        if value is not None:
+                            delivered_count += int(round(value))
+                elif "total_records" in rows[0]:
+                    value = _try_parse_float(rows[0].get("total_records"))
+                    delivered_count = int(round(value)) if value is not None else len(rows)
+                else:
+                    delivered_count = len(rows)
+            cards.append({"label": "Total Delivered", "value": int(delivered_count)})
+            continue
+
+        if target_key == "active_recipients":
+            direct_value = _try_parse_float(first_row.get("active_recipients")) if first_row else None
+            if direct_value is not None:
+                active_count = int(round(direct_value))
+            elif rows and isinstance(rows[0], dict) and "recipient_status" in rows[0]:
+                active_count = sum(1 for row in rows if _is_active_recipient_status(row.get("recipient_status")))
+            else:
+                active_count = 0
+            cards.append({"label": "Active Recipients", "value": int(active_count)})
+            continue
+
+        if target_key == "inactive_recipients":
+            direct_value = _try_parse_float(first_row.get("inactive_recipients")) if first_row else None
+            if direct_value is not None:
+                inactive_count = int(round(direct_value))
+            elif rows and isinstance(rows[0], dict) and "recipient_status" in rows[0]:
+                inactive_count = sum(1 for row in rows if _is_inactive_recipient_status(row.get("recipient_status")))
+            else:
+                inactive_count = 0
+            cards.append({"label": "Inactive Recipients", "value": int(inactive_count)})
+            continue
+
+        if target_key == "missing_contact":
+            missing_count = 0
+            direct_value = _try_parse_float(first_row.get("missing_contact")) if first_row else None
+            if direct_value is not None:
+                missing_count = int(round(direct_value))
+            elif rows and isinstance(rows[0], dict):
+                has_email = "email" in rows[0]
+                has_phone = "cellphone" in rows[0]
+                if has_email or has_phone:
+                    for row in rows:
+                        email_missing = _is_blank_contact_value(row.get("email")) if has_email else True
+                        phone_missing = _is_blank_contact_value(row.get("cellphone")) if has_phone else True
+                        if email_missing or phone_missing:
+                            missing_count += 1
+            cards.append({"label": "Missing Contact", "value": int(missing_count)})
+            continue
+
+        if target_key == "total_recipients":
+            recipient_total = 0
+            direct_value = _try_parse_float(first_row.get("total_recipients")) if first_row else None
+            if direct_value is not None:
+                recipient_total = int(round(direct_value))
+            elif rows and isinstance(rows[0], dict) and "recipient_id" in rows[0]:
+                distinct_ids = {
+                    str(row.get("recipient_id")).strip()
+                    for row in rows
+                    if str(row.get("recipient_id") or "").strip()
+                }
+                recipient_total = len(distinct_ids)
+            else:
+                recipient_total = len(rows)
+            cards.append({"label": "Total Recipients", "value": int(recipient_total)})
+            continue
+
+    return cards
+
+
+def _build_report_kpis(rows, user_query=""):
     """Compute lightweight KPI cards for report view."""
     if not isinstance(rows, list):
         rows = []
+
+    requested_targets = detect_requested_kpi_target_keys(user_query)
+    if requested_targets:
+        targeted_cards = _build_targeted_kpi_cards(rows, requested_targets)
+        if targeted_cards:
+            return targeted_cards
 
     kpis = [
         {"label": "Records", "value": len(rows)},
@@ -7084,11 +7412,15 @@ def resolve_report_view_response(user_query, table_rows, chart_source_rows=None)
 
 def build_report_payload(user_query, generated_sql, table_rows, display_mode, chart_payload):
     """Build on-screen report payload for frontend rendering."""
+    requested_kpi_targets = detect_requested_kpi_target_keys(user_query)
     return {
         "title": _build_report_title(user_query),
         "generated_at": datetime.now().strftime("%m/%d/%Y %H:%M:%S"),
         "display_mode": display_mode,
-        "kpis": _build_report_kpis(table_rows),
+        "kpis": _build_report_kpis(table_rows, user_query=user_query),
+        "kpi_targets": requested_kpi_targets,
+        # Keep bounded rows so dashboard date-filter can recalculate KPI cards client-side.
+        "rows": to_json_safe_rows(table_rows),
         "sql": normalize_generated_sql_for_log(generated_sql),
         "has_chart": bool(chart_payload),
     }
@@ -7750,6 +8082,21 @@ def detect_recipient_template_intent(user_query):
     asks_count = _contains_any_term(text, RECIPIENT_TEMPLATE_KEYWORDS.get("count", []))
     asks_listing = _contains_any_term(text, RECIPIENT_TEMPLATE_KEYWORDS.get("listing", []))
     asks_percentage = any(term in text for term in ("percentage", "percent", "share", "ratio", "distribution", "breakdown"))
+    has_name_context = any(
+        term in text
+        for term in (
+            "first name",
+            "first names",
+            "firstname",
+            "preferred first name",
+            "last name",
+            "last names",
+            "lastname",
+            "recipient name",
+            "recipient names",
+        )
+    )
+    has_name_text_filter = bool(_extract_recipient_name_text_filter(text))
 
     # Status-only prompts like "how many are inactive in this account"
     # should still route to core_recipients even if "recipient" is omitted.
@@ -7759,6 +8106,9 @@ def detect_recipient_template_intent(user_query):
         # Percentage/share questions need row-level status values for visualization.
         if asks_count and not asks_percentage:
             return "recipient_count"
+        return "recipient_directory"
+
+    if not has_package and (has_name_context or has_name_text_filter):
         return "recipient_directory"
 
     if has_recipient and asks_count and not has_package:
@@ -7825,6 +8175,89 @@ def detect_requested_recipient_status_keys(user_query):
             seen.add(item)
             ordered.append(item)
     return ordered
+
+
+def _find_term_positions(message_text, terms):
+    """Locate term start positions for distance-based intent scope detection."""
+    positions = []
+    for term in terms:
+        normalized = str(term or "").strip().lower()
+        if not normalized:
+            continue
+        if " " in normalized:
+            pattern = re.escape(normalized)
+        else:
+            pattern = rf"\b{re.escape(normalized)}\b"
+        positions.extend(match.start() for match in re.finditer(pattern, message_text))
+    return positions
+
+
+def _infer_status_key_scope(message_text, status_key):
+    """Infer whether a status key is being used for recipient context or package context."""
+    text = normalize_intent_text(message_text)
+    if not text:
+        return "unknown"
+
+    key = str(status_key or "").strip().lower()
+    if not key:
+        return "unknown"
+
+    status_terms = [key] + [str(alias).strip().lower() for alias in RECIPIENT_STATUS_TERMS.get(key, []) if str(alias).strip()]
+    status_positions = _find_term_positions(text, status_terms)
+    if not status_positions:
+        return "unknown"
+
+    package_anchor_terms = (
+        "package", "packages", "tracking", "shipment", "shipments",
+        "parcel", "parcels", "delivery", "deliveries", "received",
+    )
+    recipient_anchor_terms = (
+        "recipient", "recipients", "resident", "residents", "member", "members",
+        "user", "users", "account holder", "first name", "last name", "contact",
+    )
+    package_positions = _find_term_positions(text, package_anchor_terms)
+    recipient_positions = _find_term_positions(text, recipient_anchor_terms)
+
+    if not package_positions and not recipient_positions:
+        return "unknown"
+
+    min_package_distance = min(
+        (abs(status_pos - package_pos) for status_pos in status_positions for package_pos in package_positions),
+        default=10**9,
+    )
+    min_recipient_distance = min(
+        (abs(status_pos - recipient_pos) for status_pos in status_positions for recipient_pos in recipient_positions),
+        default=10**9,
+    )
+
+    if min_package_distance < min_recipient_distance:
+        return "package"
+    if min_recipient_distance < min_package_distance:
+        return "recipient"
+
+    if package_positions and not recipient_positions:
+        return "package"
+    if recipient_positions and not package_positions:
+        return "recipient"
+    return "unknown"
+
+
+def detect_requested_recipient_status_keys_for_scope(user_query, entity_scope="recipient"):
+    """Infer status keys constrained to the requested semantic scope (recipient/package)."""
+    requested = detect_requested_recipient_status_keys(user_query)
+    if not requested:
+        return []
+
+    normalized_scope = str(entity_scope or "").strip().lower()
+    if normalized_scope not in {"recipient", "package"}:
+        return requested
+
+    scoped = []
+    for key in requested:
+        inferred_scope = _infer_status_key_scope(user_query, key)
+        if inferred_scope in ("unknown", normalized_scope):
+            scoped.append(key)
+    return scoped
 
 
 def _build_recipient_status_sql_condition(column_name, status_keys):
@@ -7909,6 +8342,83 @@ def build_recipient_count_only_sql(account_id, user_query):
         "SELECT COUNT(DISTINCT recipient_id) AS total_records "
         "FROM core_recipients "
         f"WHERE {where_sql}"
+    )
+
+
+def build_targeted_kpi_summary_sql(account_id, target_keys):
+    """Build deterministic one-row SQL containing KPI aggregate values."""
+    account_id_lit = sql_literal(account_id)
+
+    requested = []
+    seen = set()
+    for key in (target_keys or []):
+        normalized_key = str(key or "").strip().lower()
+        if not normalized_key or normalized_key in seen:
+            continue
+        seen.add(normalized_key)
+        requested.append(normalized_key)
+
+    if not requested:
+        requested = [
+            "total_delivered",
+            "active_recipients",
+            "inactive_recipients",
+            "missing_contact",
+            "total_recipients",
+        ]
+
+    active_condition = _build_recipient_status_sql_condition("cr.recipient_status", ["active"])
+    inactive_condition = _build_recipient_status_sql_condition("cr.recipient_status", ["inactive"])
+    missing_contact_condition = (
+        "(NULLIF(TRIM(COALESCE(cr.email, '')), '') IS NULL "
+        "OR NULLIF(TRIM(COALESCE(cr.cellphone, '')), '') IS NULL)"
+    )
+
+    select_parts = []
+    for key in requested:
+        if key == "total_delivered":
+            select_parts.append(
+                "(SELECT COUNT(*) FROM track_packages tp "
+                f"WHERE tp.account_id = {account_id_lit} "
+                "AND tp.date_received IS NOT NULL) AS total_delivered"
+            )
+            continue
+
+        if key == "active_recipients":
+            if active_condition:
+                select_parts.append(
+                    f"SUM(CASE WHEN {active_condition} THEN 1 ELSE 0 END) AS active_recipients"
+                )
+            else:
+                select_parts.append("0 AS active_recipients")
+            continue
+
+        if key == "inactive_recipients":
+            if inactive_condition:
+                select_parts.append(
+                    f"SUM(CASE WHEN {inactive_condition} THEN 1 ELSE 0 END) AS inactive_recipients"
+                )
+            else:
+                select_parts.append("0 AS inactive_recipients")
+            continue
+
+        if key == "missing_contact":
+            select_parts.append(
+                f"SUM(CASE WHEN {missing_contact_condition} THEN 1 ELSE 0 END) AS missing_contact"
+            )
+            continue
+
+        if key == "total_recipients":
+            select_parts.append("COUNT(DISTINCT cr.recipient_id) AS total_recipients")
+
+    if not select_parts:
+        return ""
+
+    return (
+        "SELECT "
+        + ", ".join(select_parts)
+        + " FROM core_recipients cr "
+        + f"WHERE cr.account_id = {account_id_lit}"
     )
 
 
@@ -8305,6 +8815,10 @@ def _has_missing_contact_intent(text):
     if re.search(r"\b(?:do|does)\s+(?:not|note|no)\s+(?:have|has)\b", text) is not None:
         return True
 
+    # Apostrophe variants can normalize as "don t" / "doesn t".
+    if re.search(r"\b(?:don\s*t|doesn\s*t|didn\s*t|cant|can\s*not|cannot|wont|won\s*t)\s+(?:have|has|get|got)\b", text) is not None:
+        return True
+
     # Catch direct forms such as "not/note having both cellphone and email".
     return re.search(r"\b(?:not|note)\s+(?:have|having)\b", text) is not None
 
@@ -8346,6 +8860,137 @@ def _asks_cellphone_contact(text):
     )
 
 
+def _normalize_name_filter_value(raw_value, preserve_phrase=False):
+    """Normalize extracted name-filter text and remove trailing prompt artifacts."""
+    value = str(raw_value or "").strip().lower()
+    if not value:
+        return ""
+
+    # Trim wrapper punctuation/quotes from both ends.
+    value = value.strip(" \t\n\r\"'`.,:;!?()[]{}")
+    if not value:
+        return ""
+
+    # Remove trailing segments that belong to output-format instructions,
+    # not the actual name phrase.
+    stop_patterns = (
+        r"\s+in\s+table\s+format\b.*$",
+        r"\s+as\s+table\b.*$",
+        r"\s+in\s+table\b.*$",
+        r"\s+for\s+my\s+account\b.*$",
+        r"\s+for\s+this\s+account\b.*$",
+        r"\s+of\s+my\s+account\b.*$",
+        r"\s+show\s+me\b.*$",
+        r"\s+give\s+me\b.*$",
+    )
+    for pattern in stop_patterns:
+        value = re.sub(pattern, "", value).strip()
+
+    # Keep only safe text that can appear in names while preserving spaces.
+    value = re.sub(r"[^a-z0-9\s'\-]", " ", value)
+    value = re.sub(r"\s+", " ", value).strip(" \t\n\r\"'`.,:;!?()[]{}")
+    if preserve_phrase:
+        return value
+
+    # For unquoted values, collapse accidental long captures to a practical phrase window.
+    tokens = [token for token in value.split(" ") if token]
+    if len(tokens) > 6:
+        value = " ".join(tokens[:6])
+    return value
+
+
+def _extract_recipient_name_text_filter(text):
+    """Extract first/last/recipient name text filters from natural-language text."""
+    if not text:
+        return None
+
+    field_pattern = r"(?:preferred\s+first\s+name|first\s+name|firstname|last\s+name|lastname|recipient\s+name|name|names)"
+    operator_pattern = r"(?:start|starts|starting|begins?|beginning|end|ends|ending|contain|contains|containing|like|equal|equals|exactly|exact)"
+
+    # Match quoted values first so multi-word phrases are captured accurately.
+    patterns = (
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:start|starts|starting|begins?|beginning)\s+with\s+[\"'](?P<value>[^\"']+)[\"']", "starts_with"),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:end|ends|ending)\s+with\s+[\"'](?P<value>[^\"']+)[\"']", "ends_with"),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:contain|contains|containing|like)\s+[\"'](?P<value>[^\"']+)[\"']", "contains"),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:equal|equals|exactly|exact)\s+[\"'](?P<value>[^\"']+)[\"']", "equals"),
+
+        # Unquoted multi-word values: capture until common prompt-boundaries.
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:start|starts|starting|begins?|beginning)\s+with\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?)(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)", "starts_with"),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:end|ends|ending)\s+with\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?)(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)", "ends_with"),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:contain|contains|containing|like)\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?)(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)", "contains"),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:equal|equals|exactly|exact)\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?)(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)", "equals"),
+
+        # Keep typo-tolerant shorthand like "firstname wih syta" as prefix match.
+        (rf"\b(?P<field>{field_pattern})\b\s+(?:with|wih)\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?)(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)", "starts_with"),
+    )
+
+    for pattern, operator in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+
+        raw_field = str(match.group("field") or "").strip().lower()
+        quoted_value = re.search(r"[\"']", pattern) is not None
+        value = _normalize_name_filter_value(match.group("value"), preserve_phrase=quoted_value)
+        if not value:
+            continue
+
+        if "last" in raw_field:
+            field_key = "last_name"
+        elif "first" in raw_field:
+            field_key = "first_name"
+        else:
+            field_key = "recipient_name"
+
+        return {"field": field_key, "operator": operator, "value": value}
+
+    return None
+
+
+def _build_recipient_name_text_filter_condition(alias_prefix, name_filter):
+    """Build SQL condition for recipient name text filters using recipient aliases."""
+    if not isinstance(name_filter, dict):
+        return ""
+
+    field_key = str(name_filter.get("field") or "").strip().lower()
+    operator = str(name_filter.get("operator") or "starts_with").strip().lower()
+    value = str(name_filter.get("value") or "").strip().lower()
+    if field_key not in ("first_name", "last_name", "recipient_name") or not value:
+        return ""
+    if operator not in ("starts_with", "ends_with", "contains", "equals"):
+        operator = "starts_with"
+
+    first_name_expr = (
+        f"LOWER(COALESCE(NULLIF(TRIM(COALESCE({alias_prefix}.preferred_first_name, {alias_prefix}.first_name)), ''), "
+        f"NULLIF(TRIM({alias_prefix}.first_name), '')))"
+    )
+    last_name_expr = f"LOWER(COALESCE(NULLIF(TRIM({alias_prefix}.last_name), ''), ''))"
+    recipient_name_expr = (
+        "LOWER(COALESCE(NULLIF(TRIM(CONCAT_WS(' ', "
+        f"NULLIF(COALESCE({alias_prefix}.preferred_first_name, {alias_prefix}.first_name), ''), "
+        f"NULLIF({alias_prefix}.last_name, ''))), ''), ''))"
+    )
+
+    if operator == "equals":
+        match_sql = sql_literal(value)
+        comparator = "="
+    elif operator == "ends_with":
+        match_sql = sql_literal("%" + value)
+        comparator = "LIKE"
+    elif operator == "contains":
+        match_sql = sql_literal("%" + value + "%")
+        comparator = "LIKE"
+    else:
+        match_sql = sql_literal(value + "%")
+        comparator = "LIKE"
+
+    if field_key == "first_name":
+        return f"{first_name_expr} {comparator} {match_sql}"
+    if field_key == "last_name":
+        return f"{last_name_expr} {comparator} {match_sql}"
+    return f"{recipient_name_expr} {comparator} {match_sql}"
+
+
 def build_recipient_directory_sql(account_id, user_query, row_limit=100):
     """Build deterministic recipient directory SQL in account scope."""
     text = normalize_intent_text(user_query)
@@ -8359,6 +9004,10 @@ def build_recipient_directory_sql(account_id, user_query, row_limit=100):
     )
     if status_condition:
         conditions.append(status_condition)
+    name_filter = _extract_recipient_name_text_filter(text)
+    name_filter_condition = _build_recipient_name_text_filter_condition("cr", name_filter)
+    if name_filter_condition:
+        conditions.append(name_filter_condition)
     asks_email = "email" in text
     asks_phone = _asks_cellphone_contact(text)
     missing_contact = _has_missing_contact_intent(text)
@@ -8405,21 +9054,42 @@ def build_recipient_packages_join_sql(account_id, user_query, row_limit=100):
     account_id_lit = sql_literal(account_id)
     safe_limit = None if row_limit is None else max(1, min(int(row_limit), 100))
 
+    package_scoped_status_keys = detect_requested_recipient_status_keys_for_scope(text, entity_scope="package")
+    recipient_scoped_status_keys = detect_requested_recipient_status_keys_for_scope(text, entity_scope="recipient")
+    has_pending_package_intent = "future" in package_scoped_status_keys
+    has_negative_delivery_intent = bool(re.search(r"\bnot\s+delivered\b|\bundelivered\b", text)) or has_pending_package_intent
+
+    has_pickup_term = bool(re.search(r"\bpick\s*up\b|\bpickup\b|\bcollected\b|\bcollect\b", text))
+    has_negative_pickup_intent = bool(
+        re.search(
+            r"\b(?:did\s+not|didnt|not|no|without)\s+(?:pick\s*up|pickup|collect|collected)\b|\buncollected\b|\bunpicked\b",
+            text,
+        )
+    )
+    has_positive_pickup_intent = has_pickup_term and not has_negative_pickup_intent
+    has_negative_delivery_intent = has_negative_delivery_intent or has_negative_pickup_intent
+
     conditions = [
         f"tp.account_id = {account_id_lit}",
         f"cr.account_id = {account_id_lit}",
         "tp.recipient_id = cr.recipient_id",
     ]
-    if "delivered" in text:
+    if ("delivered" in text or has_positive_pickup_intent) and not has_negative_delivery_intent:
         conditions.append("tp.date_received IS NOT NULL")
-    if "today" in text:
+    if has_pending_package_intent or has_negative_pickup_intent:
+        conditions.append("tp.date_received IS NULL")
+    if "today" in text and not (has_pending_package_intent or has_negative_pickup_intent):
         conditions.append("DATE(tp.date_received) = CURDATE()")
     status_condition = _build_recipient_status_sql_condition(
         "cr.recipient_status",
-        detect_requested_recipient_status_keys(text),
+        recipient_scoped_status_keys,
     )
     if status_condition:
         conditions.append(status_condition)
+    name_filter = _extract_recipient_name_text_filter(text)
+    name_filter_condition = _build_recipient_name_text_filter_condition("cr", name_filter)
+    if name_filter_condition:
+        conditions.append(name_filter_condition)
     asks_email = "email" in text
     asks_phone = _asks_cellphone_contact(text)
     missing_contact = _has_missing_contact_intent(text)
@@ -8465,7 +9135,22 @@ def build_recipient_packages_join_sql(account_id, user_query, row_limit=100):
 
 def build_recipient_template_no_data_answer(user_query):
     """Build deterministic no-data message for recipient template paths."""
-    status_keys = detect_requested_recipient_status_keys(user_query)
+    text = normalize_intent_text(user_query)
+    has_negative_pickup_intent = bool(
+        re.search(
+            r"\b(?:did\s+not|didnt|not|no|without)\s+(?:pick\s*up|pickup|collect|collected)\b|\buncollected\b|\bunpicked\b",
+            text,
+        )
+    )
+    if has_negative_pickup_intent:
+        if "today" in text:
+            return "No recipients with unpicked packages were found for today."
+        return "No recipients with unpicked packages were found for this account."
+
+    package_scoped_status_keys = detect_requested_recipient_status_keys_for_scope(user_query, entity_scope="package")
+    if "future" in package_scoped_status_keys:
+        return "No pending packages were found for this account."
+    status_keys = detect_requested_recipient_status_keys_for_scope(user_query, entity_scope="recipient")
     if "active" in status_keys:
         return "No active recipients were found for this account."
     if "inactive" in status_keys:
@@ -9156,11 +9841,15 @@ def chatbot_ask():
             )
             return jsonify({"answer": answer, "rows": [], "status": "session_data_missing"})
 
+        schema_map = fetch_schema_metadata_for_chatbot(force_refresh=False)
+
         report_limit = extract_requested_row_limit(user_query, max_limit=REPORT_TABLE_DEFAULT_LIMIT)
         if report_limit is None:
             report_limit = REPORT_TABLE_DEFAULT_LIMIT
         report_visual_full_data = should_fetch_full_data_for_chart_query(user_query)
         report_query_limit = None if report_visual_full_data else report_limit
+        requested_kpi_targets = detect_requested_kpi_target_keys(user_query)
+        is_kpi_prompt = re.search(r"\bkpi\b", normalize_intent_text(user_query)) is not None
         recipient_accuracy_mode = should_use_recipient_accuracy_path(user_query)
         requested_top_recipient_limit = (
             extract_requested_row_limit(user_query, max_limit=100)
@@ -9172,7 +9861,9 @@ def chatbot_ask():
             top_recipient_limit = requested_top_recipient_limit or TOP_RECIPIENT_DEFAULT_LIMIT
 
         report_sql = ""
-        if is_ocr_success_breakdown_request(user_query):
+        if is_kpi_prompt and requested_kpi_targets:
+            report_sql = build_targeted_kpi_summary_sql(account_id, requested_kpi_targets)
+        elif is_ocr_success_breakdown_request(user_query):
             report_sql = build_ocr_success_breakdown_sql(account_id)
         elif recipient_accuracy_mode and is_top_recipient_request(user_query):
             report_sql = build_recipient_count_sql(account_id, user_query, row_limit=top_recipient_limit)
@@ -9208,7 +9899,6 @@ def chatbot_ask():
                 report_sql = build_recipient_packages_join_sql(account_id, user_query, row_limit=report_query_limit)
 
         if not report_sql:
-            schema_map = fetch_schema_metadata_for_chatbot()
             prompt_tables, prompt_table_source, explicit_table_mode = select_prompt_tables_for_query(
                 user_query,
                 schema_map,
@@ -12041,6 +12731,54 @@ def chatbot_dashboard_filter():
             },
         }
     )
+
+
+@app.route("/chatbot/dashboard/state", methods=["GET"])
+def chatbot_dashboard_state_get():
+    """Return persisted dashboard state for the signed-in account."""
+    account_id = session.get("account_id")
+    if not account_id:
+        return jsonify({"error": "Session expired. Please login again."}), 401
+
+    account_key = str(account_id).strip()
+    with DASHBOARD_STATE_LOCK:
+        store = _read_dashboard_state_store()
+        entry = store.get(account_key) if isinstance(store, dict) else None
+
+    state = {}
+    if isinstance(entry, dict) and isinstance(entry.get("state"), dict):
+        state = entry.get("state")
+
+    return jsonify({"status": "ok", "state": state})
+
+
+@app.route("/chatbot/dashboard/state", methods=["POST"])
+def chatbot_dashboard_state_save():
+    """Persist dashboard state for the signed-in account."""
+    account_id = session.get("account_id")
+    if not account_id:
+        return jsonify({"error": "Session expired. Please login again."}), 401
+
+    payload = request.get_json(silent=True) or {}
+    state_payload = payload.get("state") if isinstance(payload.get("state"), dict) else {}
+    normalized_state = _normalize_dashboard_state_payload(state_payload)
+    account_key = str(account_id).strip()
+
+    with DASHBOARD_STATE_LOCK:
+        store = _read_dashboard_state_store()
+        if not isinstance(store, dict):
+            store = {}
+        store[account_key] = {
+            "account_id": account_key,
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "state": normalized_state,
+        }
+        write_ok = _write_dashboard_state_store(store)
+
+    if not write_ok:
+        return jsonify({"status": "save_failed", "error": "Unable to persist dashboard state."}), 500
+
+    return jsonify({"status": "ok", "state": normalized_state})
 
 
 @app.route("/logout", methods=["GET"])
