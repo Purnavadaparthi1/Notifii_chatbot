@@ -9053,6 +9053,7 @@ def build_recipient_packages_join_sql(account_id, user_query, row_limit=100):
     text = normalize_intent_text(user_query)
     account_id_lit = sql_literal(account_id)
     safe_limit = None if row_limit is None else max(1, min(int(row_limit), 100))
+    has_expired_package_intent = bool(re.search(r"\bexpire(?:d|s)?\b|\bexpired\b|\bexpiry\b", text))
 
     package_scoped_status_keys = detect_requested_recipient_status_keys_for_scope(text, entity_scope="package")
     recipient_scoped_status_keys = detect_requested_recipient_status_keys_for_scope(text, entity_scope="recipient")
@@ -9078,6 +9079,12 @@ def build_recipient_packages_join_sql(account_id, user_query, row_limit=100):
         conditions.append("tp.date_received IS NOT NULL")
     if has_pending_package_intent or has_negative_pickup_intent:
         conditions.append("tp.date_received IS NULL")
+    if has_expired_package_intent:
+        if "today" in text:
+            conditions.append("DATE(tp.date_expires) = CURDATE()")
+        else:
+            conditions.append("tp.date_expires IS NOT NULL")
+            conditions.append("DATE(tp.date_expires) < CURDATE()")
     if "today" in text and not (has_pending_package_intent or has_negative_pickup_intent):
         conditions.append("DATE(tp.date_received) = CURDATE()")
     status_condition = _build_recipient_status_sql_condition(
@@ -9117,7 +9124,7 @@ def build_recipient_packages_join_sql(account_id, user_query, row_limit=100):
     where_sql = " AND ".join(conditions)
     sql_text = (
         "SELECT tp.package_id, tp.account_id, tp.tracking_number, tp.shipping_carrier, "
-        "tp.date_received, tp.recipient_id, "
+        "tp.date_received, tp.date_expires, tp.recipient_id, "
         "COALESCE(NULLIF(TRIM(CONCAT_WS(' ', NULLIF(COALESCE(cr.preferred_first_name, cr.first_name), ''), NULLIF(cr.last_name, ''))), ''), "
         "NULLIF(cr.email, ''), CONCAT('Recipient ', cr.recipient_id)) AS recipient_name, "
         "cr.first_name, cr.preferred_first_name, "
@@ -9136,6 +9143,12 @@ def build_recipient_packages_join_sql(account_id, user_query, row_limit=100):
 def build_recipient_template_no_data_answer(user_query):
     """Build deterministic no-data message for recipient template paths."""
     text = normalize_intent_text(user_query)
+    has_expired_package_intent = bool(re.search(r"\bexpire(?:d|s)?\b|\bexpired\b|\bexpiry\b", text))
+    if has_expired_package_intent:
+        if "today" in text:
+            return "No packages expiring today were found for this account."
+        return "No expired packages were found for this account."
+
     has_negative_pickup_intent = bool(
         re.search(
             r"\b(?:did\s+not|didnt|not|no|without)\s+(?:pick\s*up|pickup|collect|collected)\b|\buncollected\b|\bunpicked\b",

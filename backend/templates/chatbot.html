@@ -295,7 +295,23 @@
       grid-template-rows: auto 1fr;
     }
 
-    .dashboard-card.floating-kpi {
+    .dashboard-card.is-dragging {
+      opacity: 0.72;
+      box-shadow: 0 8px 18px rgba(22, 53, 67, 0.18);
+      border-color: #7ba1b2;
+    }
+
+    .dashboard-drop-placeholder {
+      border: 2px dashed #1d7f6c;
+      border-radius: 10px;
+      background: rgba(29, 127, 108, 0.08);
+      min-height: 54px;
+      width: 100%;
+      box-shadow: inset 0 0 0 1px rgba(29, 127, 108, 0.16);
+    }
+
+    .dashboard-card.floating-kpi,
+    .dashboard-card.floating-card {
       position: absolute;
       width: min(360px, calc(100% - 12px));
       max-width: calc(100% - 12px);
@@ -303,12 +319,15 @@
       margin: 0;
     }
 
-    .dashboard-card.floating-kpi .dashboard-card-head {
+    .dashboard-card.floating-kpi .dashboard-card-head,
+    .dashboard-card.floating-card .dashboard-card-head {
       cursor: move;
     }
 
     .dashboard-card.floating-kpi .dashboard-card-actions,
-    .dashboard-card.floating-kpi .dashboard-card-actions * {
+    .dashboard-card.floating-kpi .dashboard-card-actions *,
+    .dashboard-card.floating-card .dashboard-card-actions,
+    .dashboard-card.floating-card .dashboard-card-actions * {
       cursor: default;
     }
 
@@ -1196,6 +1215,8 @@
     const KPI_FLOATING_CARD_BASE_Z = 6;
     let floatingKpiZCounter = KPI_FLOATING_CARD_BASE_Z;
     let dashboardEditable = true;
+    let draggedDashboardCard = null;
+    let dashboardDropPlaceholder = null;
 
     function setTypingIndicator(isVisible) {
       typingIndicator.classList.toggle("visible", isVisible);
@@ -1232,6 +1253,9 @@
       const sources = document.querySelectorAll(".dashboard-source, [data-dashboard-source-id]");
       sources.forEach((source) => {
         const sourceId = String(source.dataset.dashboardSourceId || "").trim();
+        if (sourceId && dashboardPinnedSources.has(sourceId) && !hasDashboardCardForSourceId(sourceId)) {
+          dashboardPinnedSources.delete(sourceId);
+        }
         const isPinned = sourceId ? dashboardPinnedSources.has(sourceId) : false;
         const isDraggable = dashboardEditable && !isPinned;
         source.setAttribute("draggable", isDraggable ? "true" : "false");
@@ -1247,6 +1271,25 @@
           }
         }
       });
+    }
+
+    function hasDashboardCardForSourceId(sourceId) {
+      const normalized = String(sourceId || "").trim();
+      if (!normalized) {
+        return false;
+      }
+      return dashboardItems.querySelector(`.dashboard-card[data-source-id="${CSS.escape(normalized)}"]`) !== null;
+    }
+
+    function reconcileDashboardSourcePin(sourceId) {
+      const normalized = String(sourceId || "").trim();
+      if (!normalized) {
+        return;
+      }
+      if (!hasDashboardCardForSourceId(normalized) && dashboardPinnedSources.has(normalized)) {
+        dashboardPinnedSources.delete(normalized);
+        unlockDashboardSource(normalized);
+      }
     }
 
     function setDashboardEditMode(isEditable) {
@@ -1266,6 +1309,8 @@
           removeButton.disabled = !dashboardEditable;
         }
 
+        card.setAttribute("draggable", "false");
+
         const controls = card.querySelector(".dashboard-card-size");
         if (controls) {
           const sizeButtons = controls.querySelectorAll(".dashboard-size-btn");
@@ -1278,10 +1323,45 @@
             applyDashboardCardScale(card, currentScale, controls);
           }
         }
+
       });
 
       refreshDashboardSourceInteractivity();
       setDashboardSaveStatus(dashboardEditable ? "Edit mode enabled." : "Dashboard locked. Click Edit to modify.");
+    }
+
+    function makeDashboardCardGridAligned(card) {
+      if (!card) {
+        return;
+      }
+
+      card.classList.remove("floating-kpi");
+      card.style.left = "";
+      card.style.top = "";
+      card.style.zIndex = "";
+      card.dataset.floatLeft = "";
+      card.dataset.floatTop = "";
+    }
+
+    function ensureDashboardDropPlaceholder(referenceCard = null) {
+      if (!dashboardDropPlaceholder) {
+        dashboardDropPlaceholder = document.createElement("div");
+        dashboardDropPlaceholder.className = "dashboard-drop-placeholder";
+      }
+
+      if (referenceCard instanceof Element && referenceCard.classList.contains("dashboard-card")) {
+        const computed = window.getComputedStyle(referenceCard);
+        dashboardDropPlaceholder.style.height = `${Math.max(54, referenceCard.offsetHeight)}px`;
+        dashboardDropPlaceholder.style.setProperty("--card-height", computed.getPropertyValue("--card-height") || "");
+      }
+
+      return dashboardDropPlaceholder;
+    }
+
+    function clearDashboardDropPlaceholder() {
+      if (dashboardDropPlaceholder && dashboardDropPlaceholder.parentElement) {
+        dashboardDropPlaceholder.parentElement.removeChild(dashboardDropPlaceholder);
+      }
     }
 
     function escapeHtml(text) {
@@ -2627,7 +2707,7 @@
     }
 
     function getCardScaleMin(card) {
-      if (card && card.classList && card.classList.contains("floating-kpi")) {
+      if (card && card.dataset && card.dataset.kpiCard === "1") {
         return DASHBOARD_KPI_CARD_SCALE_MIN;
       }
       return DASHBOARD_CARD_SCALE_MIN;
@@ -2738,7 +2818,7 @@
           card.style.justifySelf = "";
         }
         applyDashboardCardScale(card, nextScale, controls);
-        if (card.classList.contains("floating-kpi")) {
+        if (isFloatingLayoutCard(card)) {
           resolveFloatingKpiCollisions(card);
         }
       };
@@ -2817,12 +2897,20 @@
       return map[direction] || "default";
     }
 
+    function isFloatingLayoutCard(card) {
+      return Boolean(
+        card
+        && card.classList
+        && (card.classList.contains("floating-kpi") || card.classList.contains("floating-card"))
+      );
+    }
+
     function clampDashboardCardWidth(card, width) {
       if (!card || !Number.isFinite(width)) {
         return DASHBOARD_CARD_WIDTH_MIN_PX;
       }
 
-      const minWidth = card.classList.contains("floating-kpi")
+      const minWidth = isFloatingLayoutCard(card)
         ? DASHBOARD_KPI_CARD_WIDTH_MIN_PX
         : DASHBOARD_CARD_WIDTH_MIN_PX;
 
@@ -2847,7 +2935,7 @@
         if (resizeState) {
           const dx = event.clientX - resizeState.startX;
           const dy = event.clientY - resizeState.startY;
-          const isFloatingKpiCard = card.classList.contains("floating-kpi");
+          const isFloatingKpiCard = isFloatingLayoutCard(card);
           let nextWidth = resizeState.startWidth;
           let nextHeight = resizeState.startHeight;
           let nextLeft = resizeState.startLeft;
@@ -2918,7 +3006,7 @@
         card.style.cursor = getCursorForResizeDirection(hoveringDirection);
         window.removeEventListener("mousemove", onMouseMove);
         window.removeEventListener("mouseup", onMouseUp);
-        if (card.classList.contains("floating-kpi")) {
+        if (isFloatingLayoutCard(card)) {
           resolveFloatingKpiCollisions(card);
         }
       };
@@ -2980,13 +3068,34 @@
       return Boolean(body.querySelector(".report-wrap.kpi-single"));
     }
 
+    function getDashboardPlacementHeight(excludeCard = null) {
+      if (!dashboardItems) {
+        return 0;
+      }
+
+      let requiredHeight = Math.max(dashboardItems.clientHeight || 0, dashboardItems.scrollHeight || 0);
+      const cards = dashboardItems.querySelectorAll(".dashboard-card");
+      cards.forEach((entry) => {
+        if (!entry || entry === excludeCard) {
+          return;
+        }
+        const bottom = entry.offsetTop + entry.offsetHeight + 16;
+        if (bottom > requiredHeight) {
+          requiredHeight = bottom;
+        }
+      });
+
+      return Math.max(0, Math.round(requiredHeight));
+    }
+
     function clampFloatingKpiPosition(card, left, top) {
       if (!card || !dashboardItems) {
         return { left: 0, top: 0 };
       }
 
       const maxLeft = Math.max(0, dashboardItems.clientWidth - card.offsetWidth - 4);
-      const maxTop = Math.max(0, dashboardItems.clientHeight - card.offsetHeight - 4);
+      const placementHeight = getDashboardPlacementHeight(card);
+      const maxTop = Math.max(0, placementHeight - card.offsetHeight - 4);
       const clampedLeft = Math.max(0, Math.min(maxLeft, Math.round(left)));
       const clampedTop = Math.max(0, Math.min(maxTop, Math.round(top)));
       return { left: clampedLeft, top: clampedTop };
@@ -3051,9 +3160,9 @@
         return base;
       }
 
+      // Try local shifts first around the drop/drag point.
       let candidate = { ...base };
-      const maxIterations = 220;
-      for (let i = 0; i < maxIterations; i += 1) {
+      for (let i = 0; i < 180; i += 1) {
         const probe = {
           left: candidate.left,
           top: candidate.top,
@@ -3065,20 +3174,43 @@
           return candidate;
         }
 
-        const rightCandidate = clampFloatingKpiPosition(
-          card,
-          blocker.left + blocker.width + 8,
-          candidate.top
-        );
-        if (rightCandidate.left > candidate.left) {
-          candidate = rightCandidate;
-          continue;
+        const rightCandidate = clampFloatingKpiPosition(card, blocker.left + blocker.width + 8, candidate.top);
+        if (!isOverlapping(rightCandidate)) {
+          return rightCandidate;
         }
 
         candidate = clampFloatingKpiPosition(card, 8, blocker.top + blocker.height + 8);
+        if (!isOverlapping(candidate)) {
+          return candidate;
+        }
       }
 
-      return candidate;
+      // Fallback: scan dashboard space and pick nearest free slot to base point.
+      const maxLeft = Math.max(0, dashboardItems.clientWidth - cardWidth - 4);
+      const maxTop = Math.max(0, getDashboardPlacementHeight(card) - cardHeight - 4);
+      const stepX = Math.max(18, Math.min(40, Math.round(cardWidth * 0.16)));
+      const stepY = Math.max(18, Math.min(40, Math.round(cardHeight * 0.16)));
+
+      let best = null;
+      for (let topPos = 0; topPos <= maxTop; topPos += stepY) {
+        for (let leftPos = 0; leftPos <= maxLeft; leftPos += stepX) {
+          const slot = clampFloatingKpiPosition(card, leftPos, topPos);
+          if (isOverlapping(slot)) {
+            continue;
+          }
+
+          const distance = Math.abs(slot.left - base.left) + Math.abs(slot.top - base.top);
+          if (!best || distance < best.distance) {
+            best = { ...slot, distance };
+          }
+        }
+      }
+
+      if (best) {
+        return { left: best.left, top: best.top };
+      }
+
+      return base;
     }
 
     function setFloatingKpiCardPosition(card, left, top) {
@@ -3090,6 +3222,17 @@
       card.style.top = `${next.top}px`;
       card.dataset.floatLeft = String(next.left);
       card.dataset.floatTop = String(next.top);
+
+      if (dashboardItems) {
+        const requiredMinHeight = Math.max(
+          getDashboardPlacementHeight(card),
+          next.top + card.offsetHeight + 16,
+        );
+        const currentMinHeight = Number.parseFloat(String(dashboardItems.style.minHeight || "0")) || 0;
+        if (requiredMinHeight > currentMinHeight) {
+          dashboardItems.style.minHeight = `${Math.ceil(requiredMinHeight)}px`;
+        }
+      }
     }
 
     function resolveFloatingKpiCollisions(preferredCard = null) {
@@ -3097,7 +3240,7 @@
         return;
       }
 
-      const cards = Array.from(dashboardItems.querySelectorAll(".dashboard-card.floating-kpi"));
+      const cards = Array.from(dashboardItems.querySelectorAll(".dashboard-card.floating-kpi, .dashboard-card.floating-card"));
       if (cards.length <= 1) {
         return;
       }
@@ -3114,13 +3257,32 @@
     }
 
     function getDefaultFloatingKpiCardPosition(card) {
-      const existingCount = dashboardItems.querySelectorAll(".dashboard-card.floating-kpi").length;
+      const existingCount = dashboardItems.querySelectorAll(".dashboard-card.floating-kpi, .dashboard-card.floating-card").length;
       const column = existingCount % 3;
       const row = Math.floor(existingCount / 3);
       return {
         left: 12 + column * 26,
         top: 12 + row * 26,
       };
+    }
+
+    function promoteCardToFloatingLayout(card) {
+      if (!card || !dashboardItems) {
+        return;
+      }
+      if (isFloatingLayoutCard(card)) {
+        return;
+      }
+
+      const cardRect = card.getBoundingClientRect();
+      const containerRect = dashboardItems.getBoundingClientRect();
+      const left = (cardRect.left - containerRect.left) + dashboardItems.scrollLeft;
+      const top = (cardRect.top - containerRect.top) + dashboardItems.scrollTop;
+
+      card.classList.add("floating-card");
+      card.style.width = `${Math.round(cardRect.width)}px`;
+      card.style.justifySelf = "start";
+      setFloatingKpiCardPosition(card, left, top);
     }
 
     function setupFloatingKpiCardDrag(card) {
@@ -3169,6 +3331,8 @@
           return;
         }
 
+        promoteCardToFloatingLayout(card);
+
         const currentLeft = Number(card.dataset.floatLeft || card.offsetLeft || 0);
         const currentTop = Number(card.dataset.floatTop || card.offsetTop || 0);
         floatingKpiZCounter += 1;
@@ -3200,8 +3364,8 @@
       let initialTop = 0;
       if (Number.isFinite(dropClientX) && Number.isFinite(dropClientY)) {
         const rect = dashboardItems.getBoundingClientRect();
-        initialLeft = dropClientX - rect.left - (card.offsetWidth / 2);
-        initialTop = dropClientY - rect.top - 18;
+        initialLeft = dropClientX - rect.left + dashboardItems.scrollLeft - (card.offsetWidth / 2);
+        initialTop = dropClientY - rect.top + dashboardItems.scrollTop - 18;
       } else {
         const fallback = getDefaultFloatingKpiCardPosition(card);
         initialLeft = fallback.left;
@@ -3222,6 +3386,9 @@
       const allowDuplicate = Boolean(addOptions.allowDuplicate);
 
       const normalizedSourceId = String(sourceId || "").trim();
+      if (normalizedSourceId) {
+        reconcileDashboardSourcePin(normalizedSourceId);
+      }
       if (normalizedSourceId && dashboardPinnedSources.has(normalizedSourceId)) {
         return false;
       }
@@ -3266,7 +3433,11 @@
       body.className = "dashboard-card-body";
       body.innerHTML = contentHtml;
       hydrateDashboardCharts(body);
-      const floatingKpiMode = Boolean(addOptions.forceFloating) || isKpiDashboardCard(label, body);
+      const kpiCardMode = isKpiDashboardCard(label, body);
+      card.dataset.kpiCard = kpiCardMode ? "1" : "0";
+      // KPI cards are grid-aligned by default on first add/drop.
+      // Floating mode is reserved for explicit restore scenarios.
+      const floatingKpiMode = Boolean(addOptions.forceFloating);
 
       if (!floatingKpiMode) {
         head.appendChild(title);
@@ -3287,10 +3458,18 @@
       if (body.querySelector(".chart-wrap") || body.querySelector(".table-wrap") || body.querySelector(".report-wrap")) {
         setupDashboardCardBorderResize(card);
       }
+
+      card.setAttribute("draggable", "false");
+      setupFloatingKpiCardDrag(card);
+
       dashboardItems.appendChild(card);
 
       if (floatingKpiMode) {
         applyFloatingKpiCardLayout(card, dropClientX, dropClientY);
+      } else {
+        makeDashboardCardGridAligned(card);
+        // Keep existing floating KPI cards clear of newly dropped grid cards.
+        resolveFloatingKpiCollisions();
       }
 
       if (sizeControls && Number.isFinite(Number(addOptions.restoreScale))) {
@@ -3377,6 +3556,9 @@
           return;
         }
         if (dashboardPinnedSources.has(sourceId)) {
+          reconcileDashboardSourcePin(sourceId);
+        }
+        if (dashboardPinnedSources.has(sourceId)) {
           event.preventDefault();
           return;
         }
@@ -3405,6 +3587,7 @@
           setDashboardSaveStatus("Dashboard is locked. Click Edit to modify.");
           return;
         }
+        reconcileDashboardSourcePin(sourceId);
         if (dashboardPinnedSources.has(sourceId)) {
           addButton.textContent = "Added";
           return;
@@ -3443,11 +3626,29 @@
       const leave = (event) => {
         preventDefaults(event);
         dashboardPanel.classList.remove("drag-over");
+        if (draggedDashboardCard) {
+          const related = event.relatedTarget;
+          const stillInsideDashboard = related instanceof Element
+            && (related.closest("#dashboardPanel") || related.closest("#dashboardItems"));
+          if (!stillInsideDashboard) {
+            clearDashboardDropPlaceholder();
+          }
+        }
       };
 
       const drop = (event) => {
         preventDefaults(event);
         dashboardPanel.classList.remove("drag-over");
+
+        if (draggedDashboardCard) {
+          const placeholder = dashboardDropPlaceholder;
+          if (placeholder && placeholder.parentElement === dashboardItems) {
+            dashboardItems.insertBefore(draggedDashboardCard, placeholder);
+          }
+          clearDashboardDropPlaceholder();
+          return;
+        }
+
         if (!dashboardEditable) {
           setDashboardSaveStatus("Dashboard is locked. Click Edit to modify.");
           return;
@@ -3460,6 +3661,33 @@
         }
       };
 
+      const dragOverReorder = (event) => {
+        if (!dashboardEditable || !draggedDashboardCard) {
+          return;
+        }
+
+        const targetCard = event.target instanceof Element
+          ? event.target.closest(".dashboard-card")
+          : null;
+
+        if (!targetCard || targetCard === draggedDashboardCard || targetCard.parentElement !== dashboardItems) {
+          const placeholder = ensureDashboardDropPlaceholder(draggedDashboardCard);
+          if (placeholder.parentElement !== dashboardItems) {
+            dashboardItems.appendChild(placeholder);
+          }
+          return;
+        }
+
+        const rect = targetCard.getBoundingClientRect();
+        const afterTarget = event.clientY > (rect.top + rect.height / 2);
+        const placeholder = ensureDashboardDropPlaceholder(targetCard);
+        if (afterTarget) {
+          dashboardItems.insertBefore(placeholder, targetCard.nextSibling);
+        } else {
+          dashboardItems.insertBefore(placeholder, targetCard);
+        }
+      };
+
       [dashboardPanel, dashboardItems].forEach((target) => {
         ["dragenter", "dragover"].forEach((eventName) => {
           target.addEventListener(eventName, enter);
@@ -3469,6 +3697,8 @@
         });
         target.addEventListener("drop", drop);
       });
+
+      dashboardItems.addEventListener("dragover", dragOverReorder);
     }
 
     function setupDashboardWheelAssist() {
@@ -3512,7 +3742,7 @@
           scale: Number(card.dataset.scale || DASHBOARD_CARD_SCALE_DEFAULT),
           width: card.style.width || "",
           justify_self: card.style.justifySelf || "",
-          is_floating: card.classList.contains("floating-kpi"),
+          is_floating: isFloatingLayoutCard(card),
           float_left: Number(card.dataset.floatLeft || card.offsetLeft || 0),
           float_top: Number(card.dataset.floatTop || card.offsetTop || 0),
           z_index: Number(card.style.zIndex || 0),
