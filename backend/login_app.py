@@ -183,6 +183,10 @@ def _normalize_dashboard_state_payload(state_payload):
             continue
         content_html = content_html[:DASHBOARD_MAX_BODY_CHARS]
 
+        floating_kind = str(raw_item.get("floating_kind", "") or "").strip().lower()
+        if floating_kind not in {"kpi", "card"}:
+            floating_kind = ""
+
         item = {
             "label": label or "Saved result",
             "content_html": content_html,
@@ -190,6 +194,7 @@ def _normalize_dashboard_state_payload(state_payload):
             "width": str(raw_item.get("width", "") or "")[:40],
             "justify_self": str(raw_item.get("justify_self", "") or "")[:40],
             "is_floating": bool(raw_item.get("is_floating")),
+            "floating_kind": floating_kind,
             "float_left": raw_item.get("float_left"),
             "float_top": raw_item.get("float_top"),
             "z_index": raw_item.get("z_index"),

@@ -1309,6 +1309,20 @@
           removeButton.disabled = !dashboardEditable;
         }
 
+        if (!isFloatingLayoutCard(card)) {
+          const appliedWidth = Number.parseFloat(String(card.style.width || ""));
+          if (Number.isFinite(appliedWidth) && appliedWidth > 0) {
+            const clampedGridWidth = clampDashboardCardWidth(card, appliedWidth);
+            const trackWidth = getDashboardGridTrackWidth();
+            if (trackWidth > 0 && clampedGridWidth >= Math.floor(trackWidth - 8)) {
+              card.style.width = "100%";
+            } else {
+              card.style.width = `${clampedGridWidth}px`;
+            }
+            card.style.justifySelf = "start";
+          }
+        }
+
         card.setAttribute("draggable", "false");
 
         const controls = card.querySelector(".dashboard-card-size");
@@ -1336,6 +1350,7 @@
       }
 
       card.classList.remove("floating-kpi");
+      card.classList.remove("floating-card");
       card.style.left = "";
       card.style.top = "";
       card.style.zIndex = "";
@@ -2905,17 +2920,74 @@
       );
     }
 
+    function getDashboardGridTrackWidth() {
+      if (!dashboardItems) {
+        return 0;
+      }
+
+      const columns = Math.max(1, getDashboardGridColumnCount());
+      const styles = window.getComputedStyle(dashboardItems);
+      const columnGap = Number.parseFloat(styles.columnGap || "0") || 0;
+      const totalGap = columnGap * Math.max(0, columns - 1);
+      const available = Math.max(0, dashboardItems.clientWidth - totalGap);
+      return available > 0 ? (available / columns) : 0;
+    }
+
+    function getFloatingLayoutKind(card) {
+      if (!card || !card.classList) {
+        return "";
+      }
+      if (card.classList.contains("floating-card")) {
+        return "card";
+      }
+      if (card.classList.contains("floating-kpi")) {
+        return "kpi";
+      }
+      return "";
+    }
+
+    function getDashboardCardFloatPosition(card) {
+      if (!card || !dashboardItems) {
+        return { left: 0, top: 0 };
+      }
+
+      const datasetLeft = Number(card.dataset.floatLeft);
+      const datasetTop = Number(card.dataset.floatTop);
+      if (Number.isFinite(datasetLeft) && Number.isFinite(datasetTop)) {
+        return { left: Math.round(datasetLeft), top: Math.round(datasetTop) };
+      }
+
+      const styleLeft = Number.parseFloat(String(card.style.left || ""));
+      const styleTop = Number.parseFloat(String(card.style.top || ""));
+      if (Number.isFinite(styleLeft) && Number.isFinite(styleTop)) {
+        return { left: Math.round(styleLeft), top: Math.round(styleTop) };
+      }
+
+      const cardRect = card.getBoundingClientRect();
+      const containerRect = dashboardItems.getBoundingClientRect();
+      const left = (cardRect.left - containerRect.left) + dashboardItems.scrollLeft;
+      const top = (cardRect.top - containerRect.top) + dashboardItems.scrollTop;
+      return { left: Math.round(left), top: Math.round(top) };
+    }
+
     function clampDashboardCardWidth(card, width) {
       if (!card || !Number.isFinite(width)) {
         return DASHBOARD_CARD_WIDTH_MIN_PX;
       }
 
-      const minWidth = isFloatingLayoutCard(card)
+      const isFloating = isFloatingLayoutCard(card);
+      const minWidth = isFloating
         ? DASHBOARD_KPI_CARD_WIDTH_MIN_PX
         : DASHBOARD_CARD_WIDTH_MIN_PX;
 
       const gridContainer = card.parentElement;
-      const maxByContainer = gridContainer ? Math.max(minWidth, gridContainer.clientWidth - 6) : 1200;
+      let maxByContainer = gridContainer ? Math.max(minWidth, gridContainer.clientWidth - 6) : 1200;
+      if (!isFloating) {
+        const trackWidth = getDashboardGridTrackWidth();
+        if (trackWidth > 0) {
+          maxByContainer = Math.max(minWidth, Math.floor(trackWidth - 6));
+        }
+      }
       return Math.max(minWidth, Math.min(maxByContainer, Math.round(width)));
     }
 
@@ -3235,6 +3307,33 @@
       }
     }
 
+    function setFloatingKpiCardPositionExact(card, left, top) {
+      if (!card) {
+        return;
+      }
+
+      const maxLeft = Math.max(0, dashboardItems.clientWidth - card.offsetWidth - 4);
+      const next = {
+        left: Math.max(0, Math.min(maxLeft, Math.round(Number(left) || 0))),
+        top: Math.max(0, Math.round(Number(top) || 0)),
+      };
+      card.style.left = `${next.left}px`;
+      card.style.top = `${next.top}px`;
+      card.dataset.floatLeft = String(next.left);
+      card.dataset.floatTop = String(next.top);
+
+      if (dashboardItems) {
+        const requiredMinHeight = Math.max(
+          getDashboardPlacementHeight(card),
+          next.top + card.offsetHeight + 16,
+        );
+        const currentMinHeight = Number.parseFloat(String(dashboardItems.style.minHeight || "0")) || 0;
+        if (requiredMinHeight > currentMinHeight) {
+          dashboardItems.style.minHeight = `${Math.ceil(requiredMinHeight)}px`;
+        }
+      }
+    }
+
     function resolveFloatingKpiCollisions(preferredCard = null) {
       if (!dashboardItems) {
         return;
@@ -3250,9 +3349,8 @@
         : cards;
 
       for (const entry of ordered) {
-        const left = Number(entry.dataset.floatLeft || entry.offsetLeft || 0);
-        const top = Number(entry.dataset.floatTop || entry.offsetTop || 0);
-        setFloatingKpiCardPosition(entry, left, top);
+        const currentPos = getDashboardCardFloatPosition(entry);
+        setFloatingKpiCardPosition(entry, currentPos.left, currentPos.top);
       }
     }
 
@@ -3297,10 +3395,27 @@
 
       card.dataset.floatingDragReady = "1";
       let dragState = null;
+      const dragThresholdPx = 5;
 
       const onMouseMove = (event) => {
         if (!dragState) {
           return;
+        }
+
+        if (dragState.awaitingPromote && !isFloatingLayoutCard(card)) {
+          const dx = event.clientX - dragState.startX;
+          const dy = event.clientY - dragState.startY;
+          if (Math.hypot(dx, dy) < dragThresholdPx) {
+            return;
+          }
+
+          promoteCardToFloatingLayout(card);
+          const promotedPos = getDashboardCardFloatPosition(card);
+          floatingKpiZCounter += 1;
+          card.style.zIndex = String(floatingKpiZCounter);
+          dragState.startLeft = promotedPos.left;
+          dragState.startTop = promotedPos.top;
+          dragState.awaitingPromote = false;
         }
 
         const nextLeft = dragState.startLeft + (event.clientX - dragState.startX);
@@ -3331,17 +3446,17 @@
           return;
         }
 
-        promoteCardToFloatingLayout(card);
-
-        const currentLeft = Number(card.dataset.floatLeft || card.offsetLeft || 0);
-        const currentTop = Number(card.dataset.floatTop || card.offsetTop || 0);
-        floatingKpiZCounter += 1;
-        card.style.zIndex = String(floatingKpiZCounter);
+        const currentPos = getDashboardCardFloatPosition(card);
+        if (isFloatingLayoutCard(card)) {
+          floatingKpiZCounter += 1;
+          card.style.zIndex = String(floatingKpiZCounter);
+        }
         dragState = {
           startX: event.clientX,
           startY: event.clientY,
-          startLeft: Number.isFinite(currentLeft) ? currentLeft : 0,
-          startTop: Number.isFinite(currentTop) ? currentTop : 0,
+          startLeft: Number.isFinite(currentPos.left) ? currentPos.left : 0,
+          startTop: Number.isFinite(currentPos.top) ? currentPos.top : 0,
+          awaitingPromote: !isFloatingLayoutCard(card),
         };
 
         document.body.style.userSelect = "none";
@@ -3351,12 +3466,14 @@
       });
     }
 
-    function applyFloatingKpiCardLayout(card, dropClientX = null, dropClientY = null) {
+    function applyFloatingKpiCardLayout(card, dropClientX = null, dropClientY = null, floatingKind = "kpi") {
       if (!card) {
         return;
       }
 
-      card.classList.add("floating-kpi");
+      const normalizedKind = String(floatingKind || "kpi").trim().toLowerCase() === "card" ? "card" : "kpi";
+      card.classList.remove("floating-kpi", "floating-card");
+      card.classList.add(normalizedKind === "card" ? "floating-card" : "floating-kpi");
       floatingKpiZCounter += 1;
       card.style.zIndex = String(floatingKpiZCounter);
 
@@ -3438,6 +3555,7 @@
       // KPI cards are grid-aligned by default on first add/drop.
       // Floating mode is reserved for explicit restore scenarios.
       const floatingKpiMode = Boolean(addOptions.forceFloating);
+      const floatingKind = String(addOptions.floatingKind || "kpi").trim().toLowerCase() === "card" ? "card" : "kpi";
 
       if (!floatingKpiMode) {
         head.appendChild(title);
@@ -3465,7 +3583,7 @@
       dashboardItems.appendChild(card);
 
       if (floatingKpiMode) {
-        applyFloatingKpiCardLayout(card, dropClientX, dropClientY);
+        applyFloatingKpiCardLayout(card, dropClientX, dropClientY, floatingKind);
       } else {
         makeDashboardCardGridAligned(card);
         // Keep existing floating KPI cards clear of newly dropped grid cards.
@@ -3476,7 +3594,21 @@
         applyDashboardCardScale(card, Number(addOptions.restoreScale), sizeControls);
       }
       if (typeof addOptions.restoreWidth === "string" && addOptions.restoreWidth.trim()) {
-        card.style.width = addOptions.restoreWidth.trim();
+        const requestedWidthText = addOptions.restoreWidth.trim();
+        const requestedWidth = Number.parseFloat(requestedWidthText);
+        if (Number.isFinite(requestedWidth)) {
+          if (isFloatingLayoutCard(card)) {
+            card.style.width = `${clampDashboardCardWidth(card, requestedWidth)}px`;
+          } else {
+            const clampedGridWidth = clampDashboardCardWidth(card, requestedWidth);
+            const trackWidth = getDashboardGridTrackWidth();
+            if (trackWidth > 0 && clampedGridWidth >= Math.floor(trackWidth - 8)) {
+              card.style.width = "100%";
+            } else {
+              card.style.width = `${clampedGridWidth}px`;
+            }
+          }
+        }
       }
       if (typeof addOptions.restoreJustifySelf === "string" && addOptions.restoreJustifySelf.trim()) {
         card.style.justifySelf = addOptions.restoreJustifySelf.trim();
@@ -3486,7 +3618,7 @@
         && Number.isFinite(Number(addOptions.restoreLeft))
         && Number.isFinite(Number(addOptions.restoreTop))
       ) {
-        setFloatingKpiCardPosition(card, Number(addOptions.restoreLeft), Number(addOptions.restoreTop));
+        setFloatingKpiCardPositionExact(card, Number(addOptions.restoreLeft), Number(addOptions.restoreTop));
       }
       if (floatingKpiMode && Number.isFinite(Number(addOptions.restoreZIndex))) {
         const restoredZ = Number(addOptions.restoreZIndex);
@@ -3504,7 +3636,9 @@
       if (!allowDuplicate) {
         void applyDashboardDateFilter();
       }
-      setDashboardEditMode(dashboardEditable);
+      if (!addOptions.skipModeSync) {
+        setDashboardEditMode(dashboardEditable);
+      }
       return true;
     }
 
@@ -3736,6 +3870,8 @@
           return;
         }
 
+        const floatPos = getDashboardCardFloatPosition(card);
+
         items.push({
           label,
           content_html: body.innerHTML,
@@ -3743,8 +3879,9 @@
           width: card.style.width || "",
           justify_self: card.style.justifySelf || "",
           is_floating: isFloatingLayoutCard(card),
-          float_left: Number(card.dataset.floatLeft || card.offsetLeft || 0),
-          float_top: Number(card.dataset.floatTop || card.offsetTop || 0),
+          floating_kind: getFloatingLayoutKind(card),
+          float_left: Number(floatPos.left || 0),
+          float_top: Number(floatPos.top || 0),
           z_index: Number(card.style.zIndex || 0),
         });
       });
@@ -3781,13 +3918,16 @@
           null,
           {
             allowDuplicate: true,
-            forceFloating: Boolean(item.is_floating),
+            forceFloating: Boolean(item.is_floating)
+              && ["kpi", "card"].includes(String(item.floating_kind || "").trim().toLowerCase()),
+            floatingKind: String(item.floating_kind || "").trim().toLowerCase(),
             restoreScale: Number(item.scale),
             restoreWidth: String(item.width || ""),
             restoreJustifySelf: String(item.justify_self || ""),
             restoreLeft: Number(item.float_left),
             restoreTop: Number(item.float_top),
             restoreZIndex: Number(item.z_index),
+            skipModeSync: true,
           }
         );
       }
