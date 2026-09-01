@@ -19,6 +19,9 @@ backend/flask_session/
 *.log
 logs/
 backend/logs/
+backend/login_page.log*
+# Generated query history
+backend/sql_query_table.csv
 
 # OS/editor noise
 .DS_Store
