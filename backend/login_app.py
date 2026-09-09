@@ -1771,6 +1771,27 @@ def _has_count_intent(text):
     return _contains_any_term(text, COUNT_INTENT_TERMS)
 
 
+def wants_recipient_join_count_only(user_query):
+    """Return True only when count intent is present without an explicit listing request.
+
+    Words like "total"/"count" are ambiguous on their own (e.g. "total list of
+    packages" is a listing request, not an aggregate), so explicit listing/table
+    wording always takes priority over ambiguous count-style adjectives.
+    """
+    text = normalize_intent_text(user_query)
+    if not _has_count_intent(text):
+        return False
+
+    listing_terms = (
+        "list", "lists", "listing", "table", "records", "record",
+        "rows", "row", "details", "detail", "data",
+    )
+    if any(re.search(rf"\b{re.escape(term)}\b", text) for term in listing_terms):
+        return False
+
+    return True
+
+
 def _has_carrier_subject(text):
     """Return True when query mentions carrier-related subject terms."""
     return _contains_any_term(text, CARRIER_SUBJECT_TERMS)
@@ -8090,6 +8111,11 @@ def detect_recipient_template_intent(user_query):
     )
     has_name_text_filter = bool(_extract_recipient_name_text_filter(text))
 
+    # Name-based phrasing ("first name", "last name", explicit name filters like
+    # "starts with syta") implicitly identifies a recipient even when the literal
+    # word "recipient" is absent, so treat it as a recipient signal too.
+    has_recipient = has_recipient or has_name_context or has_name_text_filter
+
     # Status-only prompts like "how many are inactive in this account"
     # should still route to core_recipients even if "recipient" is omitted.
     has_status_context = bool(requested_status_keys)
@@ -8891,48 +8917,69 @@ def _normalize_name_filter_value(raw_value, preserve_phrase=False):
     return value
 
 
+RECIPIENT_NAME_FILTER_STOP_VALUES = {
+    "this", "that", "these", "those", "my", "the", "a", "an", "all", "any",
+    "account", "accounts", "this account", "my account", "the account",
+    "recipient", "recipients", "member", "members", "user", "users",
+    "package", "packages", "them", "it", "today", "yesterday", "table",
+    "list", "data", "details", "report", "kpi", "each", "every", "individual",
+}
+
+
 def _extract_recipient_name_text_filter(text):
     """Extract first/last/recipient name text filters from natural-language text."""
     if not text:
         return None
 
     field_pattern = r"(?:preferred\s+first\s+name|first\s+name|firstname|last\s+name|lastname|recipient\s+name|name|names)"
-    operator_pattern = r"(?:start|starts|starting|begins?|beginning|end|ends|ending|contain|contains|containing|like|equal|equals|exactly|exact)"
+    boundary_lookahead = r"(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)"
 
     # Match quoted values first so multi-word phrases are captured accurately.
+    # Each entry: (pattern, operator, forced_field_key_or_None).
     patterns = (
-        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:start|starts|starting|begins?|beginning)\s+with\s+[\"'](?P<value>[^\"']+)[\"']", "starts_with"),
-        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:end|ends|ending)\s+with\s+[\"'](?P<value>[^\"']+)[\"']", "ends_with"),
-        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:contain|contains|containing|like)\s+[\"'](?P<value>[^\"']+)[\"']", "contains"),
-        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:equal|equals|exactly|exact)\s+[\"'](?P<value>[^\"']+)[\"']", "equals"),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:start|starts|starting|begins?|beginning)\s+with\s+[\"'](?P<value>[^\"']+)[\"']", "starts_with", None),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:end|ends|ending)\s+with\s+[\"'](?P<value>[^\"']+)[\"']", "ends_with", None),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:contain|contains|containing|like)\s+[\"'](?P<value>[^\"']+)[\"']", "contains", None),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:equal|equals|exactly|exact)\s+[\"'](?P<value>[^\"']+)[\"']", "equals", None),
 
         # Unquoted multi-word values: capture until common prompt-boundaries.
-        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:start|starts|starting|begins?|beginning)\s+with\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?)(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)", "starts_with"),
-        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:end|ends|ending)\s+with\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?)(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)", "ends_with"),
-        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:contain|contains|containing|like)\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?)(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)", "contains"),
-        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:equal|equals|exactly|exact)\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?)(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)", "equals"),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:start|starts|starting|begins?|beginning)\s+with\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?){boundary_lookahead}", "starts_with", None),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:end|ends|ending)\s+with\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?){boundary_lookahead}", "ends_with", None),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:contain|contains|containing|like)\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?){boundary_lookahead}", "contains", None),
+        (rf"\b(?P<field>{field_pattern})\b\s*(?:is\s+)?(?:equal|equals|exactly|exact)\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?){boundary_lookahead}", "equals", None),
 
         # Keep typo-tolerant shorthand like "firstname wih syta" as prefix match.
-        (rf"\b(?P<field>{field_pattern})\b\s+(?:with|wih)\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?)(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)", "starts_with"),
+        (rf"\b(?P<field>{field_pattern})\b\s+(?:with|wih)\s+(?P<value>[a-z0-9][a-z0-9\s'\-]*?){boundary_lookahead}", "starts_with", None),
+
+        # Generic natural-language name references without an explicit
+        # first/last/recipient-name keyword, e.g. "packages for syta",
+        # "packages delivered to syta", "syta's packages". Dynamic for any name.
+        (rf"\bpackages?\s+(?:for|of|belonging\s+to)\s+(?P<value>[a-z][a-z\s'\-]{{1,40}}?){boundary_lookahead}", "contains", "recipient_name"),
+        (rf"\bpackages?\s+(?:delivered\s+to|received\s+by|sent\s+to|picked\s+up\s+by)\s+(?P<value>[a-z][a-z\s'\-]{{1,40}}?){boundary_lookahead}", "contains", "recipient_name"),
+        (rf"\b(?:did|does|has|have)\s+(?P<value>[a-z][a-z\s'\-]{{1,40}}?)\s+(?:receive|received|get|got|has)\s+(?:any\s+|the\s+)?packages?\b", "contains", "recipient_name"),
+        (rf"\b(?P<value>[a-z][a-z\-']{{1,30}})(?:'s|s)\s+packages?\b", "contains", "recipient_name"),
     )
 
-    for pattern, operator in patterns:
+    for pattern, operator, forced_field in patterns:
         match = re.search(pattern, text)
         if not match:
             continue
 
-        raw_field = str(match.group("field") or "").strip().lower()
         quoted_value = re.search(r"[\"']", pattern) is not None
         value = _normalize_name_filter_value(match.group("value"), preserve_phrase=quoted_value)
-        if not value:
+        if not value or value in RECIPIENT_NAME_FILTER_STOP_VALUES:
             continue
 
-        if "last" in raw_field:
-            field_key = "last_name"
-        elif "first" in raw_field:
-            field_key = "first_name"
+        if forced_field:
+            field_key = forced_field
         else:
-            field_key = "recipient_name"
+            raw_field = str(match.group("field") or "").strip().lower()
+            if "last" in raw_field:
+                field_key = "last_name"
+            elif "first" in raw_field:
+                field_key = "first_name"
+            else:
+                field_key = "recipient_name"
 
         return {"field": field_key, "operator": operator, "value": value}
 
@@ -8980,7 +9027,15 @@ def _build_recipient_name_text_filter_condition(alias_prefix, name_filter):
         return f"{first_name_expr} {comparator} {match_sql}"
     if field_key == "last_name":
         return f"{last_name_expr} {comparator} {match_sql}"
-    return f"{recipient_name_expr} {comparator} {match_sql}"
+
+    # Generic "name" mentions (no explicit first/last qualifier) should match
+    # if EITHER the first name OR the last name satisfies the filter, so
+    # recipients are found regardless of which name field the value belongs to.
+    return (
+        f"({first_name_expr} {comparator} {match_sql} "
+        f"OR {last_name_expr} {comparator} {match_sql} "
+        f"OR {recipient_name_expr} {comparator} {match_sql})"
+    )
 
 
 def build_recipient_directory_sql(account_id, user_query, row_limit=100):
@@ -9040,7 +9095,7 @@ def build_recipient_directory_sql(account_id, user_query, row_limit=100):
     return sql_text
 
 
-def build_recipient_packages_join_sql(account_id, user_query, row_limit=100):
+def build_recipient_packages_join_sql(account_id, user_query, row_limit=100, count_only=False):
     """Build deterministic join SQL between track_packages and core_recipients."""
     text = normalize_intent_text(user_query)
     account_id_lit = sql_literal(account_id)
@@ -9114,6 +9169,16 @@ def build_recipient_packages_join_sql(account_id, user_query, row_limit=100):
             conditions.append("NULLIF(TRIM(COALESCE(cr.cellphone, '')), '') IS NOT NULL")
 
     where_sql = " AND ".join(conditions)
+
+    if count_only:
+        return (
+            "SELECT COUNT(*) AS total_records "
+            "FROM track_packages tp "
+            "JOIN core_recipients cr "
+            "ON tp.recipient_id = cr.recipient_id AND tp.account_id = cr.account_id "
+            f"WHERE {where_sql}"
+        )
+
     sql_text = (
         "SELECT tp.package_id, tp.account_id, tp.tracking_number, tp.shipping_carrier, "
         "tp.date_received, tp.date_expires, tp.recipient_id, "
@@ -9893,7 +9958,12 @@ def chatbot_ask():
             elif recipient_template_intent == "recipient_directory":
                 report_sql = build_recipient_directory_sql(account_id, user_query, row_limit=report_query_limit)
             elif recipient_template_intent == "recipient_packages_join":
-                report_sql = build_recipient_packages_join_sql(account_id, user_query, row_limit=report_query_limit)
+                report_sql = build_recipient_packages_join_sql(
+                    account_id,
+                    user_query,
+                    row_limit=report_query_limit,
+                    count_only=wants_recipient_join_count_only(user_query),
+                )
         elif not USE_DYNAMIC_SELECTOR_ONLY:
             recipient_template_intent = detect_recipient_template_intent(user_query)
             if recipient_template_intent == "recipient_count":
@@ -9901,7 +9971,12 @@ def chatbot_ask():
             elif recipient_template_intent == "recipient_directory":
                 report_sql = build_recipient_directory_sql(account_id, user_query, row_limit=report_query_limit)
             elif recipient_template_intent == "recipient_packages_join":
-                report_sql = build_recipient_packages_join_sql(account_id, user_query, row_limit=report_query_limit)
+                report_sql = build_recipient_packages_join_sql(
+                    account_id,
+                    user_query,
+                    row_limit=report_query_limit,
+                    count_only=wants_recipient_join_count_only(user_query),
+                )
 
         if not report_sql:
             prompt_tables, prompt_table_source, explicit_table_mode = select_prompt_tables_for_query(
@@ -11776,7 +11851,12 @@ def chatbot_ask():
         elif recipient_template_intent == "recipient_directory":
             recipient_sql = build_recipient_directory_sql(account_id, user_query, row_limit=recipient_query_limit)
         else:
-            recipient_sql = build_recipient_packages_join_sql(account_id, user_query, row_limit=recipient_query_limit)
+            recipient_sql = build_recipient_packages_join_sql(
+                account_id,
+                user_query,
+                row_limit=recipient_query_limit,
+                count_only=wants_recipient_join_count_only(user_query),
+            )
 
         recipient_exec_started_at = time.perf_counter()
         recipient_rows, recipient_status = execute_read_only_sql_for_chatbot(recipient_sql, max_rows=recipient_query_limit)
