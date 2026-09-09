@@ -7105,94 +7105,81 @@ def _build_report_title(user_query):
     return f"Report: {cleaned}"
 
 
+KPI_CONCEPT_TOKENS = {
+    "recipient": {
+        "recipient", "recipients", "recipent", "recipents", "recepient", "recepients",
+        "member", "members", "user", "users", "usr", "usrs", "people", "resident", "residents",
+        "tenant", "tenants",
+    },
+    "contact": {
+        "contact", "contacts", "email", "emails", "mail", "phone", "phones",
+        "cell", "cellphone", "mobile", "number", "numbers", "info", "detail", "details",
+    },
+    "delivered": {"delivered", "delivery", "deliveries", "deliver", "receive", "received", "receiving"},
+    "quantity": {
+        "total", "totals", "count", "counts", "counted", "volume", "summary", "sum",
+        "number", "amount", "overall", "grand", "aggregate", "how", "many",
+        "unique", "distinct", "different", "kpi", "kpis",
+    },
+    "package": {"package", "packages", "pkg", "pkgs", "parcel", "parcels", "shipment", "shipments"},
+    "active": {"active", "enabled", "working", "current", "currently"},
+    "inactive": {"inactive", "disabled", "deactivated", "suspended", "expired", "removed", "closed"},
+    "missing": {
+        "missing", "without", "empty", "null", "blank", "na", "unavailable",
+        "lack", "lacking", "absent", "incomplete",
+    },
+    "negation": {"no", "not", "non", "dont", "doesnt", "didnt", "never"},
+}
+
+
+def _kpi_text_has_concept(tokens, concept_name):
+    """Return True when normalized token set intersects a KPI concept vocabulary."""
+    return bool(tokens & KPI_CONCEPT_TOKENS.get(concept_name, set()))
+
+
 def detect_requested_kpi_target_keys(user_query):
-    """Extract explicitly requested KPI metric targets from user prompt."""
+    """Dynamically detect requested KPI metric targets from arbitrary user phrasing.
+
+    Uses concept/token-set matching (not literal phrase order) so any wording the
+    user chooses (extra words, reordering, synonyms) can still resolve to a KPI.
+    """
     text = normalize_intent_text(user_query)
     if not text:
         return []
 
-    recipient_like = r"(?:recipient(?:s)?|recipent(?:s)?|recepient(?:s)?|member(?:s)?|user(?:s)?|usr(?:s)?|people|resident(?:s)?)"
-    contact_like = r"(?:contact|contacts|contact\s+info|contact\s+details|email|emails|mail|phone|phones|cell|cellphone|mobile)"
+    tokens = set(re.findall(r"[a-z0-9]+", text))
+    if not tokens:
+        return []
 
-    target_patterns = [
-        (
-            "total_delivered",
-            (
-                r"\btotal\s+delivered\b",
-                r"\bdelivered\s+total\b",
-                r"\btotal\s+delivered\s+packages\b",
-                r"\bdelivered\s+packages\b",
-                r"\bdelivery\s+total\b",
-                r"\btotal\s+delivery\b",
-                r"\b(?:delivered|delivery)\s+(?:count|counts|volume|summary)\b",
-                r"\bcount\s+of\s+(?:delivered|delivery)\b",
-                r"\bpackages?\s+(?:delivered|delivery)\s+(?:total|count)\b",
-            ),
-        ),
-        (
-            "active_recipients",
-            (
-                r"\bactive\s+recipient\b",
-                r"\bactive\s+recipients\b",
-                r"\bactive\s+member\b",
-                r"\bactive\s+members\b",
-                rf"\bactive\s+{recipient_like}\b",
-                rf"\b{recipient_like}\s+active\b",
-                r"\bworking\s+(?:users|user|recipients|recipient|members|member)\b",
-            ),
-        ),
-        (
-            "inactive_recipients",
-            (
-                r"\binactive\s+recipient\b",
-                r"\binactive\s+recipients\b",
-                r"\binactive\s+member\b",
-                r"\binactive\s+members\b",
-                rf"\binactive\s+{recipient_like}\b",
-                rf"\b{recipient_like}\s+inactive\b",
-                r"\bnon\s*active\s+(?:users|user|recipients|recipient|members|member)\b",
-                r"\bnot\s+active\s+(?:users|user|recipients|recipient|members|member)\b",
-                r"\bdisabled\s+(?:users|user|recipients|recipient|members|member)\b",
-            ),
-        ),
-        (
-            "missing_contact",
-            (
-                r"\bmissing\s+contact\b",
-                r"\bwithout\s+contact\b",
-                r"\bno\s+contact\b",
-                r"\bmissing\s+email\b",
-                r"\bmissing\s+phone\b",
-                r"\bno\s+email\b",
-                r"\bno\s+phone\b",
-                r"\bno\s+cell\b",
-                r"\bno\s+cellphone\b",
-                rf"\b{contact_like}\s+missing\b",
-                rf"\b{contact_like}\s+(?:is\s+)?(?:empty|null|blank|na)\b",
-                rf"\bmissing\s+{contact_like}\b",
-                rf"\bwithout\s+{contact_like}\b",
-                rf"\bno\s+{contact_like}\b",
-                rf"\b{contact_like}\s+not\s+available\b",
-            ),
-        ),
-        (
-            "total_recipients",
-            (
-                r"\btotal\s+recipient\b",
-                r"\btotal\s+recipients\b",
-                r"\brecipient\s+count\b",
-                r"\brecipients\s+count\b",
-                rf"\btotal\s+{recipient_like}\b",
-                rf"\b{recipient_like}\s+count\b",
-                rf"\bcount\s+of\s+{recipient_like}\b",
-            ),
-        ),
-    ]
+    has_delivered = _kpi_text_has_concept(tokens, "delivered")
+    has_quantity = _kpi_text_has_concept(tokens, "quantity")
+    has_package = _kpi_text_has_concept(tokens, "package")
+    has_recipient = _kpi_text_has_concept(tokens, "recipient")
+    has_contact = _kpi_text_has_concept(tokens, "contact")
+    has_active = _kpi_text_has_concept(tokens, "active")
+    has_inactive = _kpi_text_has_concept(tokens, "inactive")
+    has_missing = _kpi_text_has_concept(tokens, "missing")
+    has_negation = _kpi_text_has_concept(tokens, "negation")
+
+    # Negated "active" (e.g. "not active", "non active recipients") reads as inactive intent.
+    inactive_intent = has_inactive or (has_negation and has_active)
+    active_intent = has_active and not inactive_intent
 
     requested = []
-    for target_key, patterns in target_patterns:
-        if any(re.search(pattern, text) for pattern in patterns):
-            requested.append(target_key)
+
+    if has_delivered and (has_quantity or has_package):
+        requested.append("total_delivered")
+
+    if active_intent and (has_recipient or not has_package):
+        requested.append("active_recipients")
+    elif inactive_intent and (has_recipient or not has_package):
+        requested.append("inactive_recipients")
+
+    if has_contact and (has_missing or has_negation):
+        requested.append("missing_contact")
+
+    if has_quantity and has_recipient and not requested.__contains__("missing_contact"):
+        requested.append("total_recipients")
 
     seen = set()
     ordered = []

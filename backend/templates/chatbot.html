@@ -2987,6 +2987,12 @@
         if (trackWidth > 0) {
           maxByContainer = Math.max(minWidth, Math.floor(trackWidth - 6));
         }
+      } else if (gridContainer) {
+        // Bound floating card width by the space remaining to the right of its
+        // current position, otherwise a wide resize/restore can push the card
+        // past the dashboard panel edge and visually overlap the chat panel.
+        const currentLeft = Number(card.dataset.floatLeft || card.offsetLeft || 0);
+        maxByContainer = Math.max(minWidth, gridContainer.clientWidth - currentLeft - 6);
       }
       return Math.max(minWidth, Math.min(maxByContainer, Math.round(width)));
     }
@@ -3582,16 +3588,45 @@
 
       dashboardItems.appendChild(card);
 
+      // While restoring a saved layout, positions were already collision-free when
+      // saved; skip auto collision-resolution so earlier-restored cards do not get
+      // nudged by each subsequently restored card.
+      const isRestoringLayout = Boolean(addOptions.restoring);
+
       if (floatingKpiMode) {
-        applyFloatingKpiCardLayout(card, dropClientX, dropClientY, floatingKind);
+        if (isRestoringLayout) {
+          const normalizedKind = String(floatingKind || "kpi").trim().toLowerCase() === "card" ? "card" : "kpi";
+          card.classList.remove("floating-kpi", "floating-card");
+          card.classList.add(normalizedKind === "card" ? "floating-card" : "floating-kpi");
+          floatingKpiZCounter += 1;
+          card.style.zIndex = String(floatingKpiZCounter);
+          setupFloatingKpiCardDrag(card);
+        } else {
+          applyFloatingKpiCardLayout(card, dropClientX, dropClientY, floatingKind);
+        }
       } else {
         makeDashboardCardGridAligned(card);
-        // Keep existing floating KPI cards clear of newly dropped grid cards.
-        resolveFloatingKpiCollisions();
+        if (!isRestoringLayout) {
+          // Keep existing floating KPI cards clear of newly dropped grid cards.
+          resolveFloatingKpiCollisions();
+        }
       }
 
       if (sizeControls && Number.isFinite(Number(addOptions.restoreScale))) {
         applyDashboardCardScale(card, Number(addOptions.restoreScale), sizeControls);
+      }
+      if (typeof addOptions.restoreJustifySelf === "string" && addOptions.restoreJustifySelf.trim()) {
+        card.style.justifySelf = addOptions.restoreJustifySelf.trim();
+      }
+      // Restore position first so width clamping below has the correct left
+      // offset; otherwise a wide restored width can push the card past the
+      // dashboard panel's right edge and visually overlap the chat panel.
+      if (
+        floatingKpiMode
+        && Number.isFinite(Number(addOptions.restoreLeft))
+        && Number.isFinite(Number(addOptions.restoreTop))
+      ) {
+        setFloatingKpiCardPositionExact(card, Number(addOptions.restoreLeft), Number(addOptions.restoreTop));
       }
       if (typeof addOptions.restoreWidth === "string" && addOptions.restoreWidth.trim()) {
         const requestedWidthText = addOptions.restoreWidth.trim();
@@ -3609,16 +3644,6 @@
             }
           }
         }
-      }
-      if (typeof addOptions.restoreJustifySelf === "string" && addOptions.restoreJustifySelf.trim()) {
-        card.style.justifySelf = addOptions.restoreJustifySelf.trim();
-      }
-      if (
-        floatingKpiMode
-        && Number.isFinite(Number(addOptions.restoreLeft))
-        && Number.isFinite(Number(addOptions.restoreTop))
-      ) {
-        setFloatingKpiCardPositionExact(card, Number(addOptions.restoreLeft), Number(addOptions.restoreTop));
       }
       if (floatingKpiMode && Number.isFinite(Number(addOptions.restoreZIndex))) {
         const restoredZ = Number(addOptions.restoreZIndex);
@@ -3928,6 +3953,7 @@
             restoreTop: Number(item.float_top),
             restoreZIndex: Number(item.z_index),
             skipModeSync: true,
+            restoring: true,
           }
         );
       }
