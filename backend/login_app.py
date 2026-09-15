@@ -2650,6 +2650,9 @@ def build_backend_fallback_sql(user_question, account_id, schema_map):
             relative_window_condition = build_relative_time_window_condition(question, "date_received")
             if relative_window_condition:
                 conditions.append(relative_window_condition)
+        month_name_condition = build_month_name_date_condition("date_received", question)
+        if month_name_condition:
+            conditions.append(month_name_condition)
         where_sql = " AND ".join(conditions)
         sql = f"SELECT COUNT(*) AS total_records FROM track_packages WHERE {where_sql}"
         return sql, "fallback_count_packages"
@@ -3801,6 +3804,11 @@ def build_direct_table_fast_sql(account_id, user_query, target_table, schema_map
         relative_window_condition = build_relative_time_window_condition(text, "date_received")
         if relative_window_condition:
             conditions.append(relative_window_condition)
+
+    if "date_received" in columns:
+        month_name_condition = build_month_name_date_condition("date_received", text)
+        if month_name_condition:
+            conditions.append(month_name_condition)
 
     where_sql = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     is_count_query = (
@@ -7909,6 +7917,134 @@ def extract_requested_year_bucket_list(user_query, max_years=6):
     return bounded_years[:max_items]
 
 
+MONTH_NAME_TO_NUMBER = {
+    "january": 1, "jan": 1,
+    "february": 2, "feb": 2,
+    "march": 3, "mar": 3,
+    "april": 4, "apr": 4,
+    "may": 5,
+    "june": 6, "jun": 6,
+    "july": 7, "jul": 7,
+    "august": 8, "aug": 8,
+    "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10,
+    "november": 11, "nov": 11,
+    "december": 12, "dec": 12,
+}
+_MONTH_NAME_PATTERN = re.compile(
+    r"\b(" + "|".join(sorted(MONTH_NAME_TO_NUMBER.keys(), key=len, reverse=True)) + r")\b"
+)
+
+
+def extract_requested_month_numbers(user_query):
+    """Extract distinct calendar month numbers explicitly named in the query text."""
+    text = normalize_intent_text(user_query)
+    if not text:
+        return []
+
+    months = []
+    for match in _MONTH_NAME_PATTERN.finditer(text):
+        month_number = MONTH_NAME_TO_NUMBER.get(match.group(1))
+        if month_number and month_number not in months:
+            months.append(month_number)
+    return months
+
+
+_MONTH_YEAR_TOKEN_PATTERN = re.compile(
+    r"\b(?P<month>" + "|".join(sorted(MONTH_NAME_TO_NUMBER.keys(), key=len, reverse=True)) + r")\b"
+    r"(?:\s+(?P<year>(?:19|20)\d{2}))?"
+)
+
+
+def extract_requested_month_year_pairs(user_query):
+    """Extract ordered (month, year) pairs, dynamically inferring missing years for
+    wrap-around ranges (e.g. "december and january 2026" -> Dec 2025 + Jan 2026;
+    "december 2025 and january" -> Dec 2025 + Jan 2026)."""
+    text = normalize_intent_text(user_query)
+    if not text:
+        return []
+
+    entries = []
+    for match in _MONTH_YEAR_TOKEN_PATTERN.finditer(text):
+        month_number = MONTH_NAME_TO_NUMBER.get(match.group("month"))
+        if not month_number:
+            continue
+        year_text = match.group("year")
+        entries.append({"month": month_number, "year": int(year_text) if year_text else None})
+
+    if not entries:
+        return []
+
+    # Resolve unknown years using chronological wrap adjacency relative to the
+    # nearest neighbor (before or after) that already has an explicit year.
+    for index in range(len(entries)):
+        if entries[index]["year"] is not None:
+            continue
+
+        next_entry = entries[index + 1] if index + 1 < len(entries) else None
+        prev_entry = entries[index - 1] if index > 0 else None
+
+        if next_entry is not None and next_entry["year"] is not None:
+            if entries[index]["month"] > next_entry["month"]:
+                # e.g. "december and january 2026": Dec precedes Jan chronologically, so it's the prior year.
+                entries[index]["year"] = next_entry["year"] - 1
+            else:
+                entries[index]["year"] = next_entry["year"]
+        elif prev_entry is not None and prev_entry["year"] is not None:
+            if entries[index]["month"] < prev_entry["month"]:
+                # e.g. "december 2025 and january": Jan follows Dec chronologically, so it's the next year.
+                entries[index]["year"] = prev_entry["year"] + 1
+            else:
+                entries[index]["year"] = prev_entry["year"]
+
+    pairs = []
+    seen = set()
+    for entry in entries:
+        key = (entry["month"], entry["year"])
+        if key not in seen:
+            seen.add(key)
+            pairs.append(entry)
+    return pairs
+
+
+def build_month_name_date_condition(date_column, user_query):
+    """Build SQL condition scoping a date column to explicitly named month(s), dynamically
+    pairing each month with its correct year (including inferred wrap-around years)."""
+    pairs = extract_requested_month_year_pairs(user_query)
+    if not pairs:
+        return ""
+
+    column = str(date_column or "date_received").strip().lower()
+    if not re.fullmatch(r"[a-z_][a-z0-9_\.]*", column):
+        column = "date_received"
+
+    # No explicit year mentioned anywhere: keep the simple, non-restrictive month filter.
+    if all(pair["year"] is None for pair in pairs):
+        months_sql = ", ".join(str(pair["month"]) for pair in pairs)
+        return f"MONTH({column}) IN ({months_sql})"
+
+    # Build an OR of exact (YEAR = y AND MONTH = m) clauses so distinct months are not
+    # cross-multiplied against every requested year (e.g. Dec 2025 + Jan 2026 only,
+    # not also Jan 2025 or Dec 2026).
+    clauses = []
+    unresolved_months = []
+    for pair in pairs:
+        if pair["year"] is not None:
+            clauses.append(f"(YEAR({column}) = {pair['year']} AND MONTH({column}) = {pair['month']})")
+        else:
+            unresolved_months.append(pair["month"])
+
+    if unresolved_months:
+        months_sql = ", ".join(str(month) for month in unresolved_months)
+        clauses.append(f"MONTH({column}) IN ({months_sql})")
+
+    if not clauses:
+        return ""
+    if len(clauses) == 1:
+        return clauses[0]
+    return "(" + " OR ".join(clauses) + ")"
+
+
 def is_yearly_package_count_request(user_query):
     """Return True for prompts asking package counts by explicit year(s)."""
     text = normalize_intent_text(user_query)
@@ -7999,7 +8135,13 @@ def build_yearly_package_count_sql(
     if override_time_filters and explicit_date_condition:
         conditions.append(explicit_date_condition)
     else:
-        if years:
+        # Explicit month names (e.g. "december and january 2026") take precedence and are
+        # paired with the correct year per month (including inferred wrap-around years) so
+        # the yearly-comparison path does not silently widen to the entire year.
+        month_name_condition = build_month_name_date_condition("date_received", user_query)
+        if month_name_condition:
+            conditions.append(month_name_condition)
+        elif years:
             years_sql = ", ".join(str(year) for year in years)
             conditions.append(f"YEAR(date_received) IN ({years_sql})")
         if explicit_date_condition:
@@ -8932,7 +9074,7 @@ def _extract_recipient_name_text_filter(text):
         return None
 
     field_pattern = r"(?:preferred\s+first\s+name|first\s+name|firstname|last\s+name|lastname|recipient\s+name|name|names)"
-    boundary_lookahead = r"(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me)\b|[,.!?]|$)"
+    boundary_lookahead = r"(?=\s+(?:in\s+table|as\s+table|for\s+my\s+account|for\s+this\s+account|of\s+my\s+account|show\s+me|give\s+me|in|during|between|on|from)\b|[,.!?]|$)"
 
     # Match quoted values first so multi-word phrases are captured accurately.
     # Each entry: (pattern, operator, forced_field_key_or_None).
@@ -8956,7 +9098,16 @@ def _extract_recipient_name_text_filter(text):
         # "packages delivered to syta", "syta's packages". Dynamic for any name.
         (rf"\bpackages?\s+(?:for|of|belonging\s+to)\s+(?P<value>[a-z][a-z\s'\-]{{1,40}}?){boundary_lookahead}", "contains", "recipient_name"),
         (rf"\bpackages?\s+(?:delivered\s+to|received\s+by|sent\s+to|picked\s+up\s+by)\s+(?P<value>[a-z][a-z\s'\-]{{1,40}}?){boundary_lookahead}", "contains", "recipient_name"),
-        (rf"\b(?:did|does|has|have)\s+(?P<value>[a-z][a-z\s'\-]{{1,40}}?)\s+(?:receive|received|get|got|has)\s+(?:any\s+|the\s+)?packages?\b", "contains", "recipient_name"),
+        # Action-verb phrasing (scanned/logged/checked/registered/tracked) followed by
+        # for/to/by <name>, e.g. "packages were scanned by Sunder", "packages logged in for Sandeep".
+        (
+            rf"\bpackages?\b\s*(?:were|are|was|is|got|have\s+been|has\s+been)?\s*"
+            rf"(?:scanned|logged(?:\s+in)?|checked(?:\s+in)?|registered|tracked|dropped\s+off)"
+            rf"\s+(?:for|to|by)\s+(?P<value>[a-z][a-z\s'\-]{{1,40}}?){boundary_lookahead}",
+            "contains",
+            "recipient_name",
+        ),
+        (rf"\b(?:did|does|has|have)\s+(?P<value>[a-z][a-z\s'\-]{{1,40}}?)\s+(?:receive|received|get|got|has|scan|scanned)\s+(?:any\s+|the\s+)?packages?\b", "contains", "recipient_name"),
         (rf"\b(?P<value>[a-z][a-z\-']{{1,30}})(?:'s|s)\s+packages?\b", "contains", "recipient_name"),
     )
 
@@ -9134,6 +9285,9 @@ def build_recipient_packages_join_sql(account_id, user_query, row_limit=100, cou
             conditions.append("DATE(tp.date_expires) < CURDATE()")
     if "today" in text and not (has_pending_package_intent or has_negative_pickup_intent):
         conditions.append("DATE(tp.date_received) = CURDATE()")
+    month_name_condition = build_month_name_date_condition("tp.date_received", text)
+    if month_name_condition:
+        conditions.append(month_name_condition)
     status_condition = _build_recipient_status_sql_condition(
         "cr.recipient_status",
         recipient_scoped_status_keys,

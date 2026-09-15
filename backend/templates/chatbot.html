@@ -60,11 +60,17 @@
       grid-template-columns: minmax(0, 1fr);
     }
 
+    body.dashboard-first.chat-open .shell {
+      grid-template-columns: minmax(0, 1fr) var(--chat-dock-width);
+    }
+
     body.dashboard-first .dashboard-panel {
       border-right: none;
     }
 
     .dashboard-panel {
+      position: relative;
+      z-index: 0;
       display: flex;
       flex-direction: column;
       gap: 10px;
@@ -494,7 +500,7 @@
       border-radius: 0;
       box-shadow: -10px 0 24px rgba(17, 40, 50, 0.2);
       background: #fff;
-      z-index: 65;
+      z-index: 100;
       opacity: 0;
       pointer-events: none;
       transform: translateX(18px);
@@ -502,10 +508,23 @@
     }
 
     body.dashboard-first.chat-open .dashboard-panel {
-      padding-right: calc(var(--chat-dock-width) + 18px);
+      width: auto;
+      max-width: none;
+      padding-right: 16px;
+    }
+
+    body.dashboard-first.chat-open .dashboard-items {
+      width: auto;
+      max-width: 100%;
+      overflow: hidden;
     }
 
     body.dashboard-first.chat-open .chat-shell {
+      position: static;
+      width: auto;
+      height: auto;
+      border-left: 1px solid #bfd1d7;
+      box-shadow: -10px 0 24px rgba(17, 40, 50, 0.2);
       opacity: 1;
       pointer-events: auto;
       transform: translateX(0);
@@ -1111,7 +1130,7 @@
 <body>
   <main class="shell">
     <aside id="dashboardPanel" class="dashboard-panel">
-      <h2 class="dashboard-title">notifiiDashboard</h2>
+      <h2 class="dashboard-title">Notifii Dashboard</h2>
       <p class="dashboard-sub">Drop chart/table/report anywhere in this panel, or use Add to Dashboard below each result.</p>
       <div class="dashboard-controls-row">
         <section class="dashboard-filter" aria-label="Dashboard date filter">
@@ -1214,6 +1233,17 @@
     const DASHBOARD_KPI_CARD_WIDTH_MIN_PX = 120;
     const KPI_FLOATING_CARD_BASE_Z = 6;
     let floatingKpiZCounter = KPI_FLOATING_CARD_BASE_Z;
+    // Chat panel/fab use z-index 65/70 (see CSS); floating cards must never reach
+    // or exceed that so they can't render on top of the chat panel once opened.
+    const KPI_FLOATING_CARD_MAX_Z = 50;
+    function bumpFloatingKpiZIndex(card) {
+      if (!card) {
+        return;
+      }
+      floatingKpiZCounter = Math.min(floatingKpiZCounter + 1, KPI_FLOATING_CARD_MAX_Z);
+      card.style.zIndex = String(floatingKpiZCounter);
+    }
+
     let dashboardEditable = true;
     let draggedDashboardCard = null;
     let dashboardDropPlaceholder = null;
@@ -1231,6 +1261,12 @@
       if (messageInput) {
         messageInput.focus();
       }
+      if (typeof enforceFloatingCardBounds === "function") {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(enforceFloatingCardBounds);
+        });
+        setTimeout(enforceFloatingCardBounds, 220);
+      }
     }
 
     function closeChatPanel() {
@@ -1238,6 +1274,12 @@
       if (chatFab) {
         chatFab.setAttribute("aria-expanded", "false");
         chatFab.focus();
+      }
+      if (typeof enforceFloatingCardBounds === "function") {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(enforceFloatingCardBounds);
+        });
+        setTimeout(enforceFloatingCardBounds, 220);
       }
     }
 
@@ -1341,6 +1383,11 @@
       });
 
       refreshDashboardSourceInteractivity();
+      if (dashboardEditable) {
+        // Pull any card that ended up out of bounds back inside the panel
+        // before the user starts dragging/resizing again.
+        enforceFloatingCardBounds();
+      }
       setDashboardSaveStatus(dashboardEditable ? "Edit mode enabled." : "Dashboard locked. Click Edit to modify.");
     }
 
@@ -2970,6 +3017,24 @@
       return { left: Math.round(left), top: Math.round(top) };
     }
 
+    function getVisibleDashboardWidth() {
+      if (!dashboardItems) {
+        return 0;
+      }
+
+      const containerRect = dashboardItems.getBoundingClientRect();
+      let visibleRight = containerRect.right;
+      const chatShell = document.querySelector(".chat-shell");
+      if (document.body.classList.contains("chat-open") && chatShell) {
+        const chatRect = chatShell.getBoundingClientRect();
+        if (chatRect.width > 0 && chatRect.left > containerRect.left) {
+          visibleRight = Math.min(visibleRight, chatRect.left);
+        }
+      }
+
+      return Math.max(0, Math.round(visibleRight - containerRect.left) + dashboardItems.scrollLeft);
+    }
+
     function clampDashboardCardWidth(card, width) {
       if (!card || !Number.isFinite(width)) {
         return DASHBOARD_CARD_WIDTH_MIN_PX;
@@ -2992,7 +3057,7 @@
         // current position, otherwise a wide resize/restore can push the card
         // past the dashboard panel edge and visually overlap the chat panel.
         const currentLeft = Number(card.dataset.floatLeft || card.offsetLeft || 0);
-        maxByContainer = Math.max(minWidth, gridContainer.clientWidth - currentLeft - 6);
+        maxByContainer = Math.max(minWidth, getVisibleDashboardWidth() - currentLeft - 6);
       }
       return Math.max(minWidth, Math.min(maxByContainer, Math.round(width)));
     }
@@ -3085,6 +3150,9 @@
         window.removeEventListener("mousemove", onMouseMove);
         window.removeEventListener("mouseup", onMouseUp);
         if (isFloatingLayoutCard(card)) {
+          // Remember the user's explicitly chosen width as the new "natural"
+          // size so future edge-compression restores back to this width.
+          card.dataset.naturalWidth = String(card.offsetWidth);
           resolveFloatingKpiCollisions(card);
         }
       };
@@ -3171,7 +3239,7 @@
         return { left: 0, top: 0 };
       }
 
-      const maxLeft = Math.max(0, dashboardItems.clientWidth - card.offsetWidth - 4);
+      const maxLeft = Math.max(0, getVisibleDashboardWidth() - card.offsetWidth - 4);
       const placementHeight = getDashboardPlacementHeight(card);
       const maxTop = Math.max(0, placementHeight - card.offsetHeight - 4);
       const clampedLeft = Math.max(0, Math.min(maxLeft, Math.round(left)));
@@ -3264,7 +3332,7 @@
       }
 
       // Fallback: scan dashboard space and pick nearest free slot to base point.
-      const maxLeft = Math.max(0, dashboardItems.clientWidth - cardWidth - 4);
+      const maxLeft = Math.max(0, getVisibleDashboardWidth() - cardWidth - 4);
       const maxTop = Math.max(0, getDashboardPlacementHeight(card) - cardHeight - 4);
       const stepX = Math.max(18, Math.min(40, Math.round(cardWidth * 0.16)));
       const stepY = Math.max(18, Math.min(40, Math.round(cardHeight * 0.16)));
@@ -3295,6 +3363,24 @@
       if (!card) {
         return;
       }
+
+      // Compress (shrink) the card's width as it nears the panel's right edge,
+      // the same responsive behavior chart/grid cards get from CSS, instead of
+      // letting it overlap the chat panel or get hard-stopped at the boundary.
+      if (dashboardItems) {
+        const isFloating = isFloatingLayoutCard(card);
+        const minWidth = isFloating ? DASHBOARD_KPI_CARD_WIDTH_MIN_PX : DASHBOARD_CARD_WIDTH_MIN_PX;
+        if (!card.dataset.naturalWidth) {
+          card.dataset.naturalWidth = String(card.offsetWidth || minWidth);
+        }
+        const naturalWidth = Number(card.dataset.naturalWidth) || card.offsetWidth || minWidth;
+        const availableWidth = Math.max(minWidth, getVisibleDashboardWidth() - Math.max(0, Math.round(left)) - 4);
+        const compressedWidth = Math.max(minWidth, Math.min(naturalWidth, availableWidth));
+        if (Math.round(compressedWidth) !== Math.round(card.offsetWidth)) {
+          card.style.width = `${Math.round(compressedWidth)}px`;
+        }
+      }
+
       const next = findNearestFloatingKpiFreePosition(card, left, top);
       card.style.left = `${next.left}px`;
       card.style.top = `${next.top}px`;
@@ -3360,6 +3446,60 @@
       }
     }
 
+    function enforceFloatingCardBounds() {
+      // Grid cards get a fresh column position whenever the dashboard narrows.
+      // Floating KPI cards need the equivalent reflow explicitly because their
+      // left coordinate is persisted in pixels.
+      if (!dashboardItems) {
+        return;
+      }
+
+      const visibleWidth = getVisibleDashboardWidth();
+      const cards = dashboardItems.querySelectorAll(".dashboard-card.floating-kpi, .dashboard-card.floating-card");
+      cards.forEach((card) => {
+        const isFloating = isFloatingLayoutCard(card);
+        const minWidth = isFloating ? DASHBOARD_KPI_CARD_WIDTH_MIN_PX : DASHBOARD_CARD_WIDTH_MIN_PX;
+        if (!card.dataset.naturalWidth) {
+          card.dataset.naturalWidth = String(card.offsetWidth || minWidth);
+        }
+        const naturalWidth = Number(card.dataset.naturalWidth) || card.offsetWidth || minWidth;
+        const currentPos = getDashboardCardFloatPosition(card);
+        const previousWidth = Number(card.dataset.floatingLayoutWidth) || visibleWidth;
+        const targetWidth = Math.max(minWidth, Math.min(naturalWidth, visibleWidth - 4));
+        const previousTravel = Math.max(1, previousWidth - card.offsetWidth - 4);
+        const nextTravel = Math.max(0, visibleWidth - targetWidth - 4);
+        const horizontalRatio = Math.max(0, Math.min(1, currentPos.left / previousTravel));
+        const reflowedLeft = Math.round(horizontalRatio * nextTravel);
+
+        if (Math.round(targetWidth) !== Math.round(card.offsetWidth)) {
+          card.style.width = `${Math.round(targetWidth)}px`;
+        }
+
+        setFloatingKpiCardPosition(card, reflowedLeft, currentPos.top);
+        card.dataset.floatingLayoutWidth = String(visibleWidth);
+      });
+    }
+
+    let floatingBoundsResizeTimer = null;
+    function scheduleFloatingBoundsEnforcement(delayMs = 60) {
+      if (floatingBoundsResizeTimer) {
+        clearTimeout(floatingBoundsResizeTimer);
+      }
+      floatingBoundsResizeTimer = setTimeout(enforceFloatingCardBounds, delayMs);
+    }
+
+    window.addEventListener("resize", () => scheduleFloatingBoundsEnforcement(150));
+
+    // Observe the dashboard panel itself so any width change (including the
+    // grid-column resize that happens when the chatbot panel opens/closes)
+    // re-fits floating cards, not just actual browser window resizes.
+    if (typeof ResizeObserver === "function" && dashboardPanel) {
+      const dashboardPanelResizeObserver = new ResizeObserver(() => {
+        scheduleFloatingBoundsEnforcement(60);
+      });
+      dashboardPanelResizeObserver.observe(dashboardPanel);
+    }
+
     function getDefaultFloatingKpiCardPosition(card) {
       const existingCount = dashboardItems.querySelectorAll(".dashboard-card.floating-kpi, .dashboard-card.floating-card").length;
       const column = existingCount % 3;
@@ -3417,8 +3557,7 @@
 
           promoteCardToFloatingLayout(card);
           const promotedPos = getDashboardCardFloatPosition(card);
-          floatingKpiZCounter += 1;
-          card.style.zIndex = String(floatingKpiZCounter);
+          bumpFloatingKpiZIndex(card);
           dragState.startLeft = promotedPos.left;
           dragState.startTop = promotedPos.top;
           dragState.awaitingPromote = false;
@@ -3454,8 +3593,7 @@
 
         const currentPos = getDashboardCardFloatPosition(card);
         if (isFloatingLayoutCard(card)) {
-          floatingKpiZCounter += 1;
-          card.style.zIndex = String(floatingKpiZCounter);
+          bumpFloatingKpiZIndex(card);
         }
         dragState = {
           startX: event.clientX,
@@ -3480,8 +3618,7 @@
       const normalizedKind = String(floatingKind || "kpi").trim().toLowerCase() === "card" ? "card" : "kpi";
       card.classList.remove("floating-kpi", "floating-card");
       card.classList.add(normalizedKind === "card" ? "floating-card" : "floating-kpi");
-      floatingKpiZCounter += 1;
-      card.style.zIndex = String(floatingKpiZCounter);
+      bumpFloatingKpiZIndex(card);
 
       let initialLeft = 0;
       let initialTop = 0;
@@ -3598,8 +3735,7 @@
           const normalizedKind = String(floatingKind || "kpi").trim().toLowerCase() === "card" ? "card" : "kpi";
           card.classList.remove("floating-kpi", "floating-card");
           card.classList.add(normalizedKind === "card" ? "floating-card" : "floating-kpi");
-          floatingKpiZCounter += 1;
-          card.style.zIndex = String(floatingKpiZCounter);
+          bumpFloatingKpiZIndex(card);
           setupFloatingKpiCardDrag(card);
         } else {
           applyFloatingKpiCardLayout(card, dropClientX, dropClientY, floatingKind);
@@ -3634,6 +3770,8 @@
         if (Number.isFinite(requestedWidth)) {
           if (isFloatingLayoutCard(card)) {
             card.style.width = `${clampDashboardCardWidth(card, requestedWidth)}px`;
+            // Restored width becomes the compression baseline for this card.
+            card.dataset.naturalWidth = String(card.offsetWidth);
           } else {
             const clampedGridWidth = clampDashboardCardWidth(card, requestedWidth);
             const trackWidth = getDashboardGridTrackWidth();
@@ -3646,7 +3784,7 @@
         }
       }
       if (floatingKpiMode && Number.isFinite(Number(addOptions.restoreZIndex))) {
-        const restoredZ = Number(addOptions.restoreZIndex);
+        const restoredZ = Math.min(Number(addOptions.restoreZIndex), KPI_FLOATING_CARD_MAX_Z);
         card.style.zIndex = String(restoredZ);
         floatingKpiZCounter = Math.max(floatingKpiZCounter, restoredZ);
       }
@@ -3961,6 +4099,9 @@
       dashboardDateFrom.value = String(safeState.from_date || "");
       dashboardDateTo.value = String(safeState.to_date || "");
       void applyDashboardDateFilter();
+      // Always verify restored floating cards fit within the panel, even when
+      // the dashboard loads locked (view-only), so nothing renders past the edge.
+      enforceFloatingCardBounds();
       const locked = Boolean(safeState.locked);
       setDashboardEditMode(!locked);
       if (rawItems.length > 0) {
