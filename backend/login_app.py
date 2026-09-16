@@ -7931,9 +7931,35 @@ MONTH_NAME_TO_NUMBER = {
     "november": 11, "nov": 11,
     "december": 12, "dec": 12,
 }
-_MONTH_NAME_PATTERN = re.compile(
-    r"\b(" + "|".join(sorted(MONTH_NAME_TO_NUMBER.keys(), key=len, reverse=True)) + r")\b"
-)
+_MONTH_FULL_NAME_TO_NUMBER = {
+    month_name: month_number
+    for month_name, month_number in MONTH_NAME_TO_NUMBER.items()
+    if len(month_name) > 3
+}
+_MONTH_WORD_PATTERN = re.compile(r"\b(?:[a-z]+|(?:19|20)\d{2})\b")
+
+
+def _resolve_month_token(token):
+    """Resolve an exact month alias or a close misspelling of a full month name."""
+    normalized = str(token or "").strip().lower()
+    if not normalized:
+        return None
+
+    exact_month = MONTH_NAME_TO_NUMBER.get(normalized)
+    if exact_month:
+        return exact_month
+
+    if len(normalized) < 4:
+        return None
+
+    best_month = None
+    best_score = 0.0
+    for month_name, month_number in _MONTH_FULL_NAME_TO_NUMBER.items():
+        score = SequenceMatcher(None, normalized, month_name).ratio()
+        if score > best_score:
+            best_month = month_number
+            best_score = score
+    return best_month if best_score >= 0.80 else None
 
 
 def extract_requested_month_numbers(user_query):
@@ -7943,17 +7969,11 @@ def extract_requested_month_numbers(user_query):
         return []
 
     months = []
-    for match in _MONTH_NAME_PATTERN.finditer(text):
-        month_number = MONTH_NAME_TO_NUMBER.get(match.group(1))
+    for match in _MONTH_WORD_PATTERN.finditer(text):
+        month_number = _resolve_month_token(match.group(0))
         if month_number and month_number not in months:
             months.append(month_number)
     return months
-
-
-_MONTH_YEAR_TOKEN_PATTERN = re.compile(
-    r"\b(?P<month>" + "|".join(sorted(MONTH_NAME_TO_NUMBER.keys(), key=len, reverse=True)) + r")\b"
-    r"(?:\s+(?P<year>(?:19|20)\d{2}))?"
-)
 
 
 def extract_requested_month_year_pairs(user_query):
@@ -7965,11 +7985,15 @@ def extract_requested_month_year_pairs(user_query):
         return []
 
     entries = []
-    for match in _MONTH_YEAR_TOKEN_PATTERN.finditer(text):
-        month_number = MONTH_NAME_TO_NUMBER.get(match.group("month"))
+    month_matches = list(_MONTH_WORD_PATTERN.finditer(text))
+    for match_index, match in enumerate(month_matches):
+        month_number = _resolve_month_token(match.group(0))
         if not month_number:
             continue
-        year_text = match.group("year")
+        year_text = None
+        next_match = month_matches[match_index + 1] if match_index + 1 < len(month_matches) else None
+        if next_match and re.fullmatch(r"(?:19|20)\d{2}", next_match.group(0)):
+            year_text = next_match.group(0)
         entries.append({"month": month_number, "year": int(year_text) if year_text else None})
 
     if not entries:
