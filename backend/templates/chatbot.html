@@ -3090,8 +3090,14 @@
           if (resizeState.direction.includes("w")) {
             nextWidth = resizeState.startWidth - dx;
             if (isFloatingKpiCard) {
+              // Dragging the left border only moves the left edge; it should be
+              // bounded by the left edge reaching 0, not by the space to the
+              // right of the card (that formula is for east/right resizing and
+              // was incorrectly blocking west extension for cards anchored
+              // further right on the dashboard).
               const rightEdge = resizeState.startLeft + resizeState.startWidth;
-              const clampedWidth = clampDashboardCardWidth(card, nextWidth);
+              const minWidth = DASHBOARD_KPI_CARD_WIDTH_MIN_PX;
+              const clampedWidth = Math.max(minWidth, Math.min(rightEdge, Math.round(nextWidth)));
               nextLeft = rightEdge - clampedWidth;
               nextWidth = clampedWidth;
             }
@@ -3119,6 +3125,13 @@
               : clampDashboardCardWidth(card, nextWidth);
             card.style.width = `${clampedWidth}px`;
             card.style.justifySelf = "start";
+            if (isFloatingKpiCard) {
+              // Keep the compression baseline in sync with the width the user is
+              // actively dragging to, otherwise setFloatingKpiCardPosition below
+              // immediately snaps the card back to its old (possibly compressed)
+              // naturalWidth on every mousemove tick, blocking left/right resize.
+              card.dataset.naturalWidth = String(Math.round(clampedWidth));
+            }
           }
 
           if (isFloatingKpiCard) {

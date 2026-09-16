@@ -8051,6 +8051,12 @@ def is_yearly_package_count_request(user_query):
     if not text:
         return False
 
+    # Recipient-scoped prompts (e.g. "packages for syta in december 2025 and
+    # january 2026") must go through the recipient join path so the name filter
+    # is not dropped in favor of an unscoped account-wide yearly aggregate.
+    if _extract_recipient_name_text_filter(text):
+        return False
+
     years = extract_requested_year_bucket_list(text)
     if not years:
         return False
@@ -8066,6 +8072,11 @@ def is_monthly_delivered_count_request(user_query):
     """Return True for prompts asking delivered package counts grouped by month."""
     text = normalize_intent_text(user_query)
     if not text:
+        return False
+
+    # Recipient-scoped prompts must stay on the recipient join path (see
+    # is_yearly_package_count_request) rather than an unscoped monthly aggregate.
+    if _extract_recipient_name_text_filter(text):
         return False
 
     has_package_context = any(token in text for token in TOP_RECIPIENT_PACKAGE_TERMS)
@@ -9102,7 +9113,7 @@ def _extract_recipient_name_text_filter(text):
         # for/to/by <name>, e.g. "packages were scanned by Sunder", "packages logged in for Sandeep".
         (
             rf"\bpackages?\b\s*(?:were|are|was|is|got|have\s+been|has\s+been)?\s*"
-            rf"(?:scanned|logged(?:\s+in)?|checked(?:\s+in)?|registered|tracked|dropped\s+off)"
+            rf"(?:scanned|logged\s*(?:in)?|checked\s*(?:in)?|registered|tracked|dropped\s+off)"
             rf"\s+(?:for|to|by)\s+(?P<value>[a-z][a-z\s'\-]{{1,40}}?){boundary_lookahead}",
             "contains",
             "recipient_name",
