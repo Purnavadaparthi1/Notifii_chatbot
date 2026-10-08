@@ -204,7 +204,7 @@ def validate_read_only_sql(sql_text):
         return False, "Only SELECT/CTE queries are allowed."
 
     for blocked in READ_ONLY_BLOCKLIST:
-        if re.search(rf"\b{blocked}\b", lowered):
+        if re.search(rf"\b{blocked}\b", lowered): 
             return False, f"Blocked SQL keyword detected: {blocked}."
 
     return True, "ok"

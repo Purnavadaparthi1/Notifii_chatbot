@@ -4745,7 +4745,6 @@ def _is_ocr_request(user_query):
     )
     return any(term in text for term in ocr_terms)
 
-
 def is_ocr_success_breakdown_request(user_query):
     """Return True when user asks OCR success/failure rate or percentage breakdown."""
     text = normalize_intent_text(user_query)
